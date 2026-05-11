@@ -19,6 +19,7 @@ def load_scaled_digits(n_samples_target=None, test_size=0.2, random_state=42, no
     ----------
     n_samples_target : int or None
         Si None, retorna el dataset original (1797 muestras).
+        Si <= 1797, toma una submuestra determinista sin reemplazo.
         Si > 1797, replica con ruido gaussiano hasta alcanzar ese tamaño.
     test_size : float
         Proporción para test split.
@@ -36,7 +37,16 @@ def load_scaled_digits(n_samples_target=None, test_size=0.2, random_state=42, no
     digits = load_digits()
     X, y = digits.data.astype(np.float64), digits.target.astype(np.int64)
 
-    if n_samples_target is not None and n_samples_target > len(X):
+    if n_samples_target is not None and n_samples_target <= 0:
+        raise ValueError("n_samples_target debe ser positivo o None")
+
+    if n_samples_target is not None and n_samples_target < len(X):
+        rng = np.random.default_rng(random_state)
+        indices = rng.permutation(len(X))[:n_samples_target]
+        X = X[indices]
+        y = y[indices]
+
+    elif n_samples_target is not None and n_samples_target > len(X):
         rng = np.random.default_rng(random_state)
         n_replicas = int(np.ceil(n_samples_target / len(X)))
 

@@ -45,8 +45,12 @@ import numpy as np
 from mpi4py import MPI
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
+import socket
+import subprocess
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.data_loader import load_scaled_digits
@@ -54,11 +58,15 @@ from utils.knn_kernel import knn_predict_batch
 
 
 CSV_FIELDS = [
+    "timestamp", "hostname", "git_commit", "command",
+    "mode",
     "n", "p", "k", "rep",
     "n_train", "n_test", "n_features",
     "t_total", "t_bcast", "t_scatter", "t_gather", "t_comm",
+    "t_comp",
     "t_comp_max", "t_comp_mean", "t_comp_min", "t_comp_std",
     "accuracy", "flops", "flops_per_sec",
+    "speedup", "efficiency",
 ]
 
 
@@ -157,6 +165,32 @@ def append_rows_to_csv(csv_path, rows):
             writer.writerow(row)
 
 
+def find_repo_root(start):
+    path = Path(start).resolve()
+    for candidate in [path, *path.parents]:
+        if (candidate / ".git").exists():
+            return candidate
+    return None
+
+
+def get_git_commit():
+    repo_root = find_repo_root(__file__)
+    if repo_root is None:
+        return "unknown"
+    try:
+        safe_dir = repo_root.as_posix()
+        result = subprocess.run(
+            ["git", "-c", f"safe.directory={safe_dir}", "rev-parse", "--short", "HEAD"],
+            cwd=repo_root,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return result.stdout.strip()
+    except Exception:
+        return "unknown"
+
+
 def main():
     parser = argparse.ArgumentParser(description="KNN-MPI v3 (instrumentado)")
     parser.add_argument("--n", type=int, default=None, help="Tamaño total del dataset")
@@ -166,6 +200,8 @@ def main():
                         help="No descartar la primera repetición")
     parser.add_argument("--csv", type=str, default=None,
                         help="Ruta del CSV (modo append). Si no se da, solo imprime.")
+    parser.add_argument("--json", type=str, default=None,
+                        help="Ruta JSON para escribir la última repetición medida.")
     args = parser.parse_args()
 
     comm = MPI.COMM_WORLD
@@ -177,12 +213,20 @@ def main():
         X_train, X_test, y_train, y_test = load_scaled_digits(args.n)
         n_train, n_features = X_train.shape
         n_test = X_test.shape[0]
+        metadata = {
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "hostname": socket.gethostname(),
+            "git_commit": get_git_commit(),
+            "command": " ".join([Path(sys.executable).name, *sys.argv]),
+            "mode": "mpi",
+        }
         print(f"[rank 0] n_train={n_train} n_test={n_test} d={n_features} "
               f"p={size} k={args.k} reps={args.reps} "
               f"warmup={'no' if args.no_warmup else 'sí'}")
     else:
         X_train = y_train = X_test = y_test = None
         n_train = n_features = n_test = None
+        metadata = None
 
     n_train = comm.bcast(n_train, root=0)
     n_features = comm.bcast(n_features, root=0)
@@ -215,6 +259,7 @@ def main():
                 flops_per_sec = flops / result["t_comp_max"] if result["t_comp_max"] > 0 else 0
 
                 rows_for_csv.append({
+                    **metadata,
                     "n": args.n if args.n else n_train + n_test,
                     "p": size,
                     "k": args.k,
@@ -227,6 +272,7 @@ def main():
                     "t_scatter": result["t_scatter"],
                     "t_gather": result["t_gather"],
                     "t_comm": t_comm,
+                    "t_comp": result["t_comp_max"],
                     "t_comp_max": result["t_comp_max"],
                     "t_comp_mean": result["t_comp_mean"],
                     "t_comp_min": result["t_comp_min"],
@@ -234,12 +280,20 @@ def main():
                     "accuracy": result["accuracy"],
                     "flops": flops,
                     "flops_per_sec": flops_per_sec,
+                    "speedup": "",
+                    "efficiency": "",
                 })
 
     # ─── Escritura final del CSV ────────────────────────────────────
     if rank == 0 and args.csv and rows_for_csv:
         append_rows_to_csv(args.csv, rows_for_csv)
         print(f"  → {len(rows_for_csv)} filas añadidas a {args.csv}")
+
+    if rank == 0 and args.json and rows_for_csv:
+        json_path = Path(args.json)
+        json_path.parent.mkdir(parents=True, exist_ok=True)
+        json_path.write_text(json.dumps(rows_for_csv[-1], indent=2), encoding="utf-8")
+        print(f"  → JSON escrito en {args.json}")
 
 
 if __name__ == "__main__":

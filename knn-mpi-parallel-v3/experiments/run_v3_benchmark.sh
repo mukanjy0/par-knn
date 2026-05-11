@@ -17,17 +17,15 @@
 set -e
 cd "$(dirname "$0")/.."
 
-CSV="${CSV:-experiments/results/v3_results.csv}"
+STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)}"
+OUT_DIR="${OUT_DIR:-results/v3_${STAMP}}"
+CSV="${CSV:-${OUT_DIR}/raw_results.csv}"
 PROCS="${PROCS:-1 2 4 8}"
 SAMPLES="${SAMPLES:-1797 5000 10000 40000}"
-REPS="${REPS:-}"
+REPS="${REPS:-3}"
+MPI_LAUNCHER="${MPI_LAUNCHER:-mpirun}"
 
 mkdir -p "$(dirname "$CSV")"
-
-# Empezamos limpio salvo que se pida lo contrario
-if [ "${APPEND:-0}" != "1" ]; then
-  rm -f "$CSV"
-fi
 
 echo "============================================================"
 echo "KNN-MPI v3 benchmark — $(date)"
@@ -52,11 +50,13 @@ for n in $SAMPLES; do
     combo=$((combo + 1))
     echo ""
     echo "[$combo/$total_combos] n=$n  p=$p"
-    mpirun --oversubscribe -n $p python src/knn_mpi_v3.py \
+    "$MPI_LAUNCHER" -n $p python src/knn_mpi_v3.py \
         --n $n --reps $REPS --csv "$CSV" 2>&1 \
       | grep -vE "WARNING|vader|Local host|help message|orte_base|---"
   done
 done
+
+python scripts/aggregate_results.py "$CSV" --out-dir "$(dirname "$CSV")"
 
 elapsed=$((SECONDS - start_time))
 echo ""

@@ -23,6 +23,12 @@ build/
 .ipynb_checkpoints/
 
 # Results/data large files
+results/
+logs/
+khipu_logs/
+*.swp
+*.swo
 *.csv
+!khipu_results/**/*.csv
 *.npy
 *.npz

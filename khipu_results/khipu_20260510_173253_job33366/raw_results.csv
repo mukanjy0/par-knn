@@ -1,0 +1,2 @@
+timestamp,hostname,git_commit,command,mode,n,p,k,rep,n_train,n_test,n_features,t_total,t_bcast,t_scatter,t_gather,t_comm,t_comp,t_comp_max,t_comp_mean,t_comp_min,t_comp_std,accuracy,flops,flops_per_sec,speedup,efficiency
+2026-05-10T17:32:58-0500,n004,unknown,python src/knn_sequential.py --n 120 --k 3 --reps 1 --csv results/khipu_20260510_173253_job33366/raw_results.csv,sequential,120,1,3,0,96,24,64,0.018440040992572904,0.0,0.0,0.0,0.0,0.018438532017171383,0.018438532017171383,0.018438532017171383,0.018438532017171383,0.0,0.9166666666666666,444672,24116453.49997967,,
