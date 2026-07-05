@@ -30,7 +30,7 @@ For `n_train` training samples, `n_test` test samples, dimension `d`, and small 
 T_seq = Theta(n_test * n_train * d)
 ```
 
-Sorting or top-k selection adds extra work. The vectorized implementation uses `argpartition`, so the practical top-k step is closer to linear in `n_train` per test row, but distance computation remains the dominant model used for FLOP reporting.
+Sorting or top-k selection adds extra work. The clean MPI implementation orders Top-K candidates lexicographically by `(distance, global_index)` so exact ties are deterministic across process counts; distance computation remains the dominant model used for FLOP reporting.
 
 ## Parallel complexity
 

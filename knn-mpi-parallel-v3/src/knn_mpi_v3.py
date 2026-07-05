@@ -1,37 +1,69 @@
 """
-KNN-MPI Beta v3 — Versión instrumentada para benchmarks reproducibles.
+KNN-MPI — Clasificación K-Nearest Neighbors paralela con descomposición por el
+conjunto de ENTRENAMIENTO, usando colectivas MPI y una operación de reducción
+PERSONALIZADA para combinar listas Top-K.
 
-Cambios respecto a v2:
-  1. PINNING DE BLAS A 1 THREAD POR PROCESO.
-     Resuelve la oversubscription detectada en los datos de v2: con BLAS
-     multi-threaded + p procesos MPI, teníamos p×8 threads en 8 cores y
-     varianza descontrolada. Ahora cada rank tiene su thread BLAS dedicado.
-     Las variables de entorno se fijan ANTES de importar numpy.
+El algoritmo
+------------
+El trabajo dominante de KNN es O(n_te · n_tr · d): para cada punto de prueba hay
+que medir su distancia a todos los puntos de entrenamiento. Por eso se reparte el
+ENTRENAMIENTO entre los p procesos y se replica el conjunto de prueba. El cómputo
+se apoya íntegramente en colectivas MPI:
 
-  2. SALIDA A CSV con todas las métricas necesarias para el análisis.
-     Una fila por repetición. El notebook de análisis lee este CSV directamente.
+  Fase 1 — Repartir el entrenamiento  (comm.Scatterv).
+      El conjunto de entrenamiento se parte en p bloques de ~n_tr/p puntos y se
+      reparte: cada proceso recibe su bloque de puntos y sus etiquetas. Scatterv
+      (en vez de Scatter) permite bloques de tamaño distinto cuando n_tr no es
+      múltiplo de p.
 
-  3. REPETICIONES INTERNAS con warm-up.
-     Un solo `mpirun` corre N+1 reps (la primera se descarta como warm-up,
-     que resuelve el efecto de cold-start de BLAS visto en v2 a n=40000).
+  Fase 2 — Difundir el test  (comm.Bcast).
+      Todo el conjunto de prueba se difunde a cada proceso. MPI implementa el
+      broadcast con un árbol interno de coste log(p).
 
-  4. BARRIERS antes de cada fase para mediciones consistentes.
+  Fase 3 — Top-K parcial local.
+      Cada proceso calcula, para cada punto de prueba, sus K vecinos más cercanos
+      DENTRO de su bloque local: las K menores distancias y los índices globales
+      de esos vecinos.
 
-  5. ESTADÍSTICAS POR RANK del cómputo (max, mean, min, std) para detectar
-     desbalance de carga.
+  Fase 4 — Reducir los Top-K  (comm.Reduce con operación PERSONALIZADA).
+      Aquí está el núcleo de esta versión. MPI trae reducciones predefinidas
+      (MPI.SUM, MPI.MAX, ...), pero no una para "quedarse con los K mejores". Se
+      define entonces una operación propia con MPI.Op.Create cuya regla de
+      combinación es MergeTopK(A, B, K) = los K mejores candidatos de A ∪ B por
+      orden lexicográfico (distancia, índice global), y se la pasa a comm.Reduce.
+      MPI la aplica en su árbol de reducción de coste
+      log(p), igual que haría con una suma. La operación es válida como reducción
+      porque MergeTopK es asociativa y conmutativa, y porque los K vecinos
+      globales más cercanos están necesariamente en la unión de los K mejores
+      locales de cada proceso. El resultado (el Top-K global por punto de prueba)
+      queda en el proceso raíz, que emite la predicción por voto mayoritario.
 
-Uso (una sola corrida):
-    mpirun -n 4 python src/knn_mpi_v3.py --n 10000 --reps 5
+Empaquetado para la operación personalizada
+--------------------------------------------
+Una operación de reducción de MPI opera sobre un único buffer de un tipo de dato.
+Como cada candidato es un par (distancia, índice) que debe viajar junto, se
+empaquetan ambos en un buffer float64 de forma (n_test, K, 2): el plano [...,0]
+guarda las distancias y el plano [...,1] los índices. Los índices se representan
+exactamente mientras n_train < 2**53, condición verificada en rank 0. La función
+de combinación reinterpreta el buffer, mezcla los 2K candidatos de cada punto de
+prueba y deja los K mejores en sitio.
 
-Uso (con CSV append para benchmark agregado):
-    mpirun -n 4 python src/knn_mpi_v3.py --n 10000 --reps 5 \\
-        --csv experiments/results/v3_results.csv
+Manejo de casos no divisibles
+-----------------------------
+  - n_tr no múltiplo de p: Scatterv reparte bloques desiguales con counts/displs
+    (los primeros n_tr % p procesos reciben un punto extra).
+  - bloque con < K puntos: local_topk_batch rellena con (+inf, -1); el relleno
+    nunca sobrevive a la reducción global mientras n_tr >= K.
 
-Validación: accuracy debe coincidir con v1 y v2 para el mismo n.
+Uso:
+    mpirun -n 4 python src/knn_mpi_v3.py --n 10000 --k 3
+
+La accuracy debe coincidir con la versión secuencial para el mismo n y ser
+independiente de p (la reducción no cambia el resultado).
 """
 # ─────────────────────────────────────────────────────────────────────────
-# CRÍTICO: pinning de BLAS antes de importar numpy.
-# Esto previene el oversubscription detectado en v2.
+# CRÍTICO: pinning de BLAS antes de importar numpy (evita oversubscription:
+# p procesos MPI × varios threads BLAS compitiendo por los mismos cores).
 # ─────────────────────────────────────────────────────────────────────────
 import os
 os.environ.setdefault("OMP_NUM_THREADS", "1")
@@ -41,259 +73,211 @@ os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")  # macOS Accelerate
 os.environ.setdefault("NUMEXPR_NUM_THREADS", "1")
 os.environ.setdefault("BLIS_NUM_THREADS", "1")
 
+import argparse
+import sys
+
 import numpy as np
 from mpi4py import MPI
-import argparse
-import csv
-import json
-import sys
-from pathlib import Path
-import socket
-import subprocess
-import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.data_loader import load_scaled_digits
-from utils.knn_kernel import knn_predict_batch
+from utils.knn_kernel import local_topk_batch, merge_topk, majority_vote
 
 
-CSV_FIELDS = [
-    "timestamp", "hostname", "git_commit", "command",
-    "mode",
-    "n", "p", "k", "rep",
-    "n_train", "n_test", "n_features",
-    "t_total", "t_bcast", "t_scatter", "t_gather", "t_comm",
-    "t_comp",
-    "t_comp_max", "t_comp_mean", "t_comp_min", "t_comp_std",
-    "accuracy", "flops", "flops_per_sec",
-    "speedup", "efficiency",
-]
+def add_dataset_args(parser):
+    parser.add_argument("--n", type=int, default=None,
+                        help="Alias historico de --n-total")
+    parser.add_argument("--n-total", type=int, default=None,
+                        help="Tamano total final; usa split porcentual")
+    parser.add_argument("--n-train", type=int, default=None,
+                        help="Tamano final exacto del train split")
+    parser.add_argument("--n-test", type=int, default=None,
+                        help="Tamano final exacto del test split")
+    parser.add_argument("--test-size", type=float, default=0.2,
+                        help="Proporcion final de test en modo --n-total")
+    parser.add_argument("--orig-test-size", type=float, default=0.2,
+                        help="Holdout original usado antes de aumentar en modo fijo")
+    parser.add_argument("--split-seed", type=int, default=42,
+                        help="Semilla del split original estratificado")
+    parser.add_argument("--augment-seed", type=int, default=123,
+                        help="Semilla del aumento deterministico")
 
 
-def run_one_rep(comm, X_train, y_train, X_test, y_test,
-                n_train, n_features, n_test, k):
+def dataset_kwargs_from_args(parser, args):
+    if args.n is not None and args.n_total is not None:
+        parser.error("--n y --n-total son alias; use solo uno")
+    return {
+        "n_total": args.n_total if args.n_total is not None else args.n,
+        "n_train": args.n_train,
+        "n_test": args.n_test,
+        "test_size": args.test_size,
+        "orig_test_size": args.orig_test_size,
+        "split_seed": args.split_seed,
+        "augment_seed": args.augment_seed,
+    }
+
+
+def block_counts_displs(n, size):
     """
-    Ejecuta una iteración completa del pipeline paralelo y retorna métricas
-    en el rank 0 (None en los demás).
+    Reparto balanceado de `n` elementos entre `size` procesos (maneja resto).
+    Los primeros (n % size) procesos reciben un elemento extra.
+
+    Returns
+    -------
+    counts : (size,) int32   nº de elementos por proceso
+    displs : (size,) int32   offset global del bloque de cada proceso
+    """
+    counts = np.array([n // size + (1 if r < n % size else 0)
+                       for r in range(size)], dtype=np.int32)
+    displs = np.array([int(np.sum(counts[:r])) for r in range(size)], dtype=np.int32)
+    return counts, displs
+
+
+def make_merge_topk_op(k):
+    """
+    Crea la operación de reducción PERSONALIZADA MergeTopK para comm.Reduce.
+
+    La función de combinación recibe los dos operandos como buffers crudos
+    (invec, inoutvec) de doubles. Cada buffer codifica (n_test, K, 2): el plano
+    [...,0] son distancias y el plano [...,1] son índices. Combina los 2K
+    candidatos de cada punto de prueba y escribe los K mejores EN SITIO sobre
+    inoutvec (convención de MPI: inoutvec <- op(invec, inoutvec)).
+
+    `commute=True`: MergeTopK ordena por (distancia, índice global), así que es
+    determinista, asociativa y conmutativa; MPI puede ordenar libremente el árbol
+    de reducción sin cambiar el Top-K resultante.
+    """
+    def _merge(invec, inoutvec, datatype):
+        # frombuffer reinterpreta la memoria del buffer sin copiar; inoutvec es
+        # escribible, así que las asignaciones impactan el buffer real de MPI.
+        a = np.frombuffer(invec, dtype=np.float64).reshape(-1, k, 2)
+        b = np.frombuffer(inoutvec, dtype=np.float64).reshape(-1, k, 2)
+        merged_dist, merged_idx = merge_topk(a[:, :, 0], a[:, :, 1],
+                                             b[:, :, 0], b[:, :, 1], k)
+        b[:, :, 0] = merged_dist
+        b[:, :, 1] = merged_idx
+
+    return MPI.Op.Create(_merge, commute=True)
+
+
+def knn_predict_mpi(comm, X_train_full, y_train_full, X_test_full,
+                    n_train, n_features, n_test, k):
+    """
+    Ejecuta el pipeline KNN distribuido. Devuelve el vector de predicciones
+    (n_test,) en el proceso raíz (rank 0) y None en los demás.
+
+    Solo el rank 0 trae datos completos en X_train_full / y_train_full /
+    X_test_full; en el resto pueden ser None.
     """
     rank = comm.Get_rank()
     size = comm.Get_size()
 
-    comm.Barrier()
-    t_start = MPI.Wtime()
-
-    # ─── BCAST entrenamiento ────────────────────────────────────────
-    comm.Barrier()
-    t0 = MPI.Wtime()
-    if rank != 0:
-        X_train = np.empty((n_train, n_features), dtype=np.float64)
-        y_train = np.empty(n_train, dtype=np.int64)
-    comm.Bcast(X_train, root=0)
-    comm.Bcast(y_train, root=0)
-    t_bcast = MPI.Wtime() - t0
-
-    # ─── SCATTERV testeo ────────────────────────────────────────────
-    comm.Barrier()
-    t0 = MPI.Wtime()
-    counts = np.array([n_test // size + (1 if i < n_test % size else 0)
-                       for i in range(size)], dtype=np.int32)
-    displs = np.array([int(np.sum(counts[:i])) for i in range(size)], dtype=np.int32)
+    counts, displs = block_counts_displs(n_train, size)
     local_n = int(counts[rank])
+    offset = int(displs[rank])   # índice global del primer punto del bloque
 
-    X_test_local = np.empty((local_n, n_features), dtype=np.float64)
-    y_test_local = np.empty(local_n, dtype=np.int64)
-
+    # ─── FASE 1: repartir el entrenamiento (Scatterv) ───────────────────────
+    # Cada proceso recibe su bloque de puntos y etiquetas. Los counts/displs van
+    # en unidades de FILAS para y, y de ELEMENTOS (filas·d) para X.
+    LocalX = np.empty((local_n, n_features), dtype=np.float64)
+    LocalY = np.empty(local_n, dtype=np.int64)
+    sendX = np.ascontiguousarray(X_train_full) if rank == 0 else None
+    sendY = np.ascontiguousarray(y_train_full, dtype=np.int64) if rank == 0 else None
     comm.Scatterv(
-        [X_test if rank == 0 else None, counts * n_features, displs * n_features, MPI.DOUBLE],
-        X_test_local, root=0
+        [sendX, counts * n_features, displs * n_features, MPI.DOUBLE],
+        LocalX, root=0
     )
     comm.Scatterv(
-        [y_test if rank == 0 else None, counts, displs, MPI.LONG],
-        y_test_local, root=0
+        [sendY, counts, displs, MPI.INT64_T],
+        LocalY, root=0
     )
-    t_scatter = MPI.Wtime() - t0
 
-    # ─── CÓMPUTO LOCAL ──────────────────────────────────────────────
-    comm.Barrier()
-    t0 = MPI.Wtime()
-    y_pred_local = knn_predict_batch(X_test_local, X_train, y_train, k)
-    t_comp_local = MPI.Wtime() - t0
-
-    # ─── GATHERV predicciones ───────────────────────────────────────
-    comm.Barrier()
-    t0 = MPI.Wtime()
+    # ─── FASE 2: difundir el test (Bcast) ───────────────────────────────────
     if rank == 0:
-        y_pred = np.empty(n_test, dtype=np.int64)
+        X_test = np.ascontiguousarray(X_test_full)
     else:
-        y_pred = None
-    comm.Gatherv(y_pred_local, [y_pred, counts, displs, MPI.LONG], root=0)
-    t_gather = MPI.Wtime() - t0
+        X_test = np.empty((n_test, n_features), dtype=np.float64)
+    comm.Bcast(X_test, root=0)
 
-    comm.Barrier()
-    t_total = MPI.Wtime() - t_start
+    # ─── FASE 3: Top-K parcial local ────────────────────────────────────────
+    # K vecinos más cercanos de cada punto de prueba DENTRO del bloque local.
+    # Índices locales -> globales sumando el offset (los rellenos -1 se dejan).
+    topk_dist, topk_idx_local = local_topk_batch(X_test, LocalX, k)
+    topk_idx = np.where(topk_idx_local >= 0, topk_idx_local + offset, topk_idx_local)
 
-    # ─── Recolección de t_comp por rank ─────────────────────────────
-    all_t_comp = comm.gather(t_comp_local, root=0)
+    # ─── FASE 4: reducir los Top-K (Reduce con operación personalizada) ─────
+    # Empaquetamos (dist, idx) en un buffer (n_test, K, 2) float64 y reducimos
+    # con MergeTopK. El Top-K global queda en recvbuf, solo en el rank 0.
+    sendbuf = np.empty((n_test, k, 2), dtype=np.float64)
+    sendbuf[:, :, 0] = topk_dist
+    sendbuf[:, :, 1] = topk_idx.astype(np.float64)
+    recvbuf = np.empty((n_test, k, 2), dtype=np.float64) if rank == 0 else None
 
+    merge_op = make_merge_topk_op(k)
+    comm.Reduce(sendbuf, recvbuf, op=merge_op, root=0)
+    merge_op.Free()
+
+    # ─── Predicción final en la raíz ────────────────────────────────────────
+    # El rank 0 conserva y_train_full completo, así que mapea índice global ->
+    # etiqueta y vota (desempatando por el vecino más cercano vía las distancias).
     if rank == 0:
-        t_comp_arr = np.array(all_t_comp)
-        accuracy = float(np.mean(y_pred == y_test))
-        return {
-            "t_total": t_total,
-            "t_bcast": t_bcast,
-            "t_scatter": t_scatter,
-            "t_gather": t_gather,
-            "t_comp_max": float(t_comp_arr.max()),
-            "t_comp_mean": float(t_comp_arr.mean()),
-            "t_comp_min": float(t_comp_arr.min()),
-            "t_comp_std": float(t_comp_arr.std()),
-            "accuracy": accuracy,
-        }
+        global_dist = recvbuf[:, :, 0]
+        global_idx = recvbuf[:, :, 1].astype(np.int64)
+        k_labels = y_train_full[global_idx]   # (n_test, k)
+        return majority_vote(k_labels, global_dist)
     return None
-
-
-def append_rows_to_csv(csv_path, rows):
-    """Añade filas al CSV; escribe encabezado solo si el archivo es nuevo."""
-    csv_path = Path(csv_path)
-    csv_path.parent.mkdir(parents=True, exist_ok=True)
-    write_header = not csv_path.exists() or csv_path.stat().st_size == 0
-    with open(csv_path, "a", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_FIELDS)
-        if write_header:
-            writer.writeheader()
-        for row in rows:
-            writer.writerow(row)
-
-
-def find_repo_root(start):
-    path = Path(start).resolve()
-    for candidate in [path, *path.parents]:
-        if (candidate / ".git").exists():
-            return candidate
-    return None
-
-
-def get_git_commit():
-    repo_root = find_repo_root(__file__)
-    if repo_root is None:
-        return "unknown"
-    try:
-        safe_dir = repo_root.as_posix()
-        result = subprocess.run(
-            ["git", "-c", f"safe.directory={safe_dir}", "rev-parse", "--short", "HEAD"],
-            cwd=repo_root,
-            check=True,
-            capture_output=True,
-            text=True,
-        )
-        return result.stdout.strip()
-    except Exception:
-        return "unknown"
 
 
 def main():
-    parser = argparse.ArgumentParser(description="KNN-MPI v3 (instrumentado)")
-    parser.add_argument("--n", type=int, default=None, help="Tamaño total del dataset")
+    parser = argparse.ArgumentParser(
+        description="KNN-MPI: descomposición por entrenamiento + Reduce con operación Top-K personalizada")
+    add_dataset_args(parser)
     parser.add_argument("--k", type=int, default=3, help="Número de vecinos")
-    parser.add_argument("--reps", type=int, default=5, help="Repeticiones medidas")
-    parser.add_argument("--no-warmup", action="store_true",
-                        help="No descartar la primera repetición")
-    parser.add_argument("--csv", type=str, default=None,
-                        help="Ruta del CSV (modo append). Si no se da, solo imprime.")
-    parser.add_argument("--json", type=str, default=None,
-                        help="Ruta JSON para escribir la última repetición medida.")
+    parser.add_argument("--pred-out", type=str, default=None,
+                        help="Ruta .npy para volcar las predicciones (para verificación).")
     args = parser.parse_args()
+    dataset_kwargs = dataset_kwargs_from_args(parser, args)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
 
-    # ─── Carga de datos en rank 0 ───────────────────────────────────
+    # ─── Carga de datos en rank 0 ───────────────────────────────────────────
     if rank == 0:
-        X_train, X_test, y_train, y_test = load_scaled_digits(args.n)
+        X_train, X_test, y_train, y_test = load_scaled_digits(**dataset_kwargs)
         n_train, n_features = X_train.shape
         n_test = X_test.shape[0]
-        metadata = {
-            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
-            "hostname": socket.gethostname(),
-            "git_commit": get_git_commit(),
-            "command": " ".join([Path(sys.executable).name, *sys.argv]),
-            "mode": "mpi",
-        }
         print(f"[rank 0] n_train={n_train} n_test={n_test} d={n_features} "
-              f"p={size} k={args.k} reps={args.reps} "
-              f"warmup={'no' if args.no_warmup else 'sí'}")
+              f"p={size} k={args.k}")
+        if args.k > n_train:
+            raise SystemExit(f"k={args.k} > n_train={n_train}: imposible")
+        if n_train >= 2**53:
+            raise SystemExit(
+                f"n_train={n_train} >= 2**53: los índices no caben exactamente "
+                "en el empaquetado float64 de la reducción"
+            )
     else:
         X_train = y_train = X_test = y_test = None
         n_train = n_features = n_test = None
-        metadata = None
 
+    # Metadata escalar (3 enteros) para que cada proceso pueda dimensionar sus
+    # buffers antes de las colectivas.
     n_train = comm.bcast(n_train, root=0)
     n_features = comm.bcast(n_features, root=0)
     n_test = comm.bcast(n_test, root=0)
 
-    # ─── Loop de repeticiones ───────────────────────────────────────
-    total_reps = args.reps + (0 if args.no_warmup else 1)
-    rows_for_csv = []
+    y_pred = knn_predict_mpi(comm, X_train, y_train, X_test,
+                             n_train, n_features, n_test, args.k)
 
-    for rep_idx in range(total_reps):
-        result = run_one_rep(
-            comm, X_train, y_train, X_test, y_test,
-            n_train, n_features, n_test, args.k
-        )
-
-        is_warmup = (not args.no_warmup) and rep_idx == 0
-        measured_idx = rep_idx if args.no_warmup else rep_idx - 1
-
-        if rank == 0:
-            tag = "[warmup]" if is_warmup else f"[rep {measured_idx}]"
-            t_comm = result["t_bcast"] + result["t_scatter"] + result["t_gather"]
-            print(f"  {tag} t_total={result['t_total']*1000:7.2f} ms  "
-                  f"t_comp_max={result['t_comp_max']*1000:7.2f} ms  "
-                  f"t_comm={t_comm*1000:6.2f} ms  acc={result['accuracy']:.4f}")
-
-            if not is_warmup:
-                # FLOPs según la fórmula del enunciado: (3d + 1) por par
-                d = n_features
-                flops = (3 * d + 1) * n_train * n_test
-                flops_per_sec = flops / result["t_comp_max"] if result["t_comp_max"] > 0 else 0
-
-                rows_for_csv.append({
-                    **metadata,
-                    "n": args.n if args.n else n_train + n_test,
-                    "p": size,
-                    "k": args.k,
-                    "rep": measured_idx,
-                    "n_train": n_train,
-                    "n_test": n_test,
-                    "n_features": n_features,
-                    "t_total": result["t_total"],
-                    "t_bcast": result["t_bcast"],
-                    "t_scatter": result["t_scatter"],
-                    "t_gather": result["t_gather"],
-                    "t_comm": t_comm,
-                    "t_comp": result["t_comp_max"],
-                    "t_comp_max": result["t_comp_max"],
-                    "t_comp_mean": result["t_comp_mean"],
-                    "t_comp_min": result["t_comp_min"],
-                    "t_comp_std": result["t_comp_std"],
-                    "accuracy": result["accuracy"],
-                    "flops": flops,
-                    "flops_per_sec": flops_per_sec,
-                    "speedup": "",
-                    "efficiency": "",
-                })
-
-    # ─── Escritura final del CSV ────────────────────────────────────
-    if rank == 0 and args.csv and rows_for_csv:
-        append_rows_to_csv(args.csv, rows_for_csv)
-        print(f"  → {len(rows_for_csv)} filas añadidas a {args.csv}")
-
-    if rank == 0 and args.json and rows_for_csv:
-        json_path = Path(args.json)
-        json_path.parent.mkdir(parents=True, exist_ok=True)
-        json_path.write_text(json.dumps(rows_for_csv[-1], indent=2), encoding="utf-8")
-        print(f"  → JSON escrito en {args.json}")
+    if rank == 0:
+        accuracy = float(np.mean(y_pred == y_test))
+        print(f"[rank 0] accuracy={accuracy:.4f}")
+        if args.pred_out:
+            from pathlib import Path
+            pred_path = Path(args.pred_out)
+            pred_path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(pred_path, y_pred)
+            print(f"  → predicciones escritas en {args.pred_out}")
 
 
 if __name__ == "__main__":

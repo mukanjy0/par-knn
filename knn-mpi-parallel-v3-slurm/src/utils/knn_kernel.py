@@ -11,7 +11,7 @@ de cómputo local y de combinación:
   - majority_vote    : voto mayoritario final sobre los K vecinos globales.
 
 NOTA IMPORTANTE: los env vars de threading BLAS deben fijarse ANTES de importar
-este módulo (porque importa numpy). Ver el header de knn_mpi_v2.py.
+este módulo (porque importa numpy). Ver el header de knn_mpi_v3.py.
 """
 import numpy as np
 

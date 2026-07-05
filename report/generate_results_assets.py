@@ -15,12 +15,12 @@ os.environ.setdefault("MPLCONFIGDIR", str(MPL_CACHE))
 import matplotlib.pyplot as plt
 
 PATHS = {
-    "v4_strong": ROOT / "khipu_v4_results/khipu_v4_strong_20260705_145227_job44803/summary.csv",
-    "v4_weak": ROOT / "khipu_v4_results/khipu_v4_weak_20260705_145816_job44804/summary.csv",
-    "v4_accuracy": ROOT / "khipu_v4_results/khipu_v4_accuracy_20260705_145910_job44805/summary.csv",
-    "v5_strong": ROOT / "khipu_v5_results/khipu_v5_strong_20260705_152151_job44813/summary.csv",
-    "v5_weak": ROOT / "khipu_v5_results/khipu_v5_weak_20260705_153745_job44814/summary.csv",
-    "v5_accuracy": ROOT / "khipu_v5_results/khipu_v5_accuracy_20260705_153947_job44815/summary.csv",
+    "v2_strong": ROOT / "khipu_v2_results/khipu_v2_strong_20260705_145227_job44803/summary.csv",
+    "v2_weak": ROOT / "khipu_v2_results/khipu_v2_weak_20260705_145816_job44804/summary.csv",
+    "v2_accuracy": ROOT / "khipu_v2_results/khipu_v2_accuracy_20260705_145910_job44805/summary.csv",
+    "v3_strong": ROOT / "khipu_v3_results/khipu_v3_strong_20260705_152151_job44813/summary.csv",
+    "v3_weak": ROOT / "khipu_v3_results/khipu_v3_weak_20260705_153745_job44814/summary.csv",
+    "v3_accuracy": ROOT / "khipu_v3_results/khipu_v3_accuracy_20260705_153947_job44815/summary.csv",
 }
 
 
@@ -43,7 +43,7 @@ def latex_table(path, tabular, caption, label):
 
 def make_plots(strong, weak, accuracy):
     plt.style.use("seaborn-v0_8-whitegrid")
-    colors = {"V4": "#1f77b4", "V5": "#d62728"}
+    colors = {"V2": "#1f77b4", "V3": "#d62728"}
 
     largest = 100000
     fig, ax = plt.subplots(figsize=(6.2, 3.8))
@@ -152,11 +152,11 @@ def make_tables(strong, weak, accuracy):
     part_rows = []
     for p in [1, 2, 4, 8, 16, 32]:
         row = [str(p)]
-        for version in ["V4", "V5"]:
+        for version in ["V2", "V3"]:
             item = weak[(weak.version == version) & (weak.p == p)].iloc[0]
             row += [str(int(item.n_train)), fmt(item.t_total_median, 3), fmt(item.flops_per_sec_median / 1e9, 1)]
         part_rows.append(row)
-    table = "\\begin{tabular}{rrrrrrr}\n\\toprule\n$p$ & V4 $n_{train}$ & V4 $T$ (s) & V4 GF/s & V5 $n_{train}$ & V5 $T$ (s) & V5 GF/s \\\\\n\\midrule\n"
+    table = "\\begin{tabular}{rrrrrrr}\n\\toprule\n$p$ & V2 $n_{train}$ & V2 $T$ (s) & V2 GF/s & V3 $n_{train}$ & V3 $T$ (s) & V3 GF/s \\\\\n\\midrule\n"
     for r in part_rows:
         table += " & ".join(r) + " \\\\\n"
     table += "\\bottomrule\n\\end{tabular}"
@@ -167,12 +167,12 @@ def make_tables(strong, weak, accuracy):
     part_rows = []
     for n in [10000, 50000, 100000]:
         row = [str(n)]
-        for version in ["V4", "V5"]:
+        for version in ["V2", "V3"]:
             item = accuracy[(accuracy.version == version) & (accuracy.n == n) & (accuracy.p == 1)].iloc[0]
             p32 = accuracy[(accuracy.version == version) & (accuracy.n == n) & (accuracy.p == 32)].iloc[0]
             row += [fmt(item.accuracy_mean, 5), fmt(p32.speedup, 2)]
         part_rows.append(row)
-    table = "\\begin{tabular}{rrrrr}\n\\toprule\n$n$ total & V4 accuracy & V4 $S_{32}$ & V5 accuracy & V5 $S_{32}$ \\\\\n\\midrule\n"
+    table = "\\begin{tabular}{rrrrr}\n\\toprule\n$n$ total & V2 accuracy & V2 $S_{32}$ & V3 accuracy & V3 $S_{32}$ \\\\\n\\midrule\n"
     for r in part_rows:
         table += " & ".join(r) + " \\\\\n"
     table += "\\bottomrule\n\\end{tabular}"
@@ -183,11 +183,11 @@ def make_tables(strong, weak, accuracy):
     rows = []
     for p in [1, 2, 4, 8, 16, 32]:
         row = [str(p)]
-        for version in ["V4", "V5"]:
+        for version in ["V2", "V3"]:
             item = strong[(strong.version == version) & (strong.n_train == 100000) & (strong.p == p)].iloc[0]
             row += [fmt(item.t_total_median, 3), fmt(item.speedup, 2), fmt(item.efficiency, 2)]
         rows.append(row)
-    table = "\\begin{tabular}{rrrrrrr}\n\\toprule\n$p$ & V4 $T$ & V4 $S$ & V4 $E$ & V5 $T$ & V5 $S$ & V5 $E$ \\\\\n\\midrule\n"
+    table = "\\begin{tabular}{rrrrrrr}\n\\toprule\n$p$ & V2 $T$ & V2 $S$ & V2 $E$ & V3 $T$ & V3 $S$ & V3 $E$ \\\\\n\\midrule\n"
     for r in rows:
         table += " & ".join(r) + " \\\\\n"
     table += "\\bottomrule\n\\end{tabular}"
@@ -200,9 +200,9 @@ def main():
     FIG.mkdir(exist_ok=True)
     GEN.mkdir(exist_ok=True)
 
-    strong = pd.concat([read("v4_strong"), read("v5_strong")], ignore_index=True)
-    weak = pd.concat([read("v4_weak"), read("v5_weak")], ignore_index=True)
-    accuracy = pd.concat([read("v4_accuracy"), read("v5_accuracy")], ignore_index=True)
+    strong = pd.concat([read("v2_strong"), read("v3_strong")], ignore_index=True)
+    weak = pd.concat([read("v2_weak"), read("v3_weak")], ignore_index=True)
+    accuracy = pd.concat([read("v2_accuracy"), read("v3_accuracy")], ignore_index=True)
 
     make_plots(strong, weak, accuracy)
     make_tables(strong, weak, accuracy)

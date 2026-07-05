@@ -25,16 +25,6 @@ PAD_DIST = np.inf
 PAD_IDX = -1
 
 
-def _lex_topk(dist, idx, k):
-    """
-    Devuelve los K mejores candidatos por orden lexicográfico:
-    primero menor distancia, y ante empate menor índice global/local.
-    """
-    order = np.lexsort((idx, dist), axis=1)[:, :k]
-    rows = np.arange(dist.shape[0])[:, None]
-    return dist[rows, order], idx[rows, order]
-
-
 def local_topk_batch(X_test, X_train_local, k):
     """
     Top-K PARCIAL de un bloque local de entrenamiento.
@@ -71,13 +61,12 @@ def local_topk_batch(X_test, X_train_local, k):
     dists_sq = test_sq + train_sq - 2.0 * cross
 
     # Top-kk vecinos del bloque (kk = K salvo que el bloque sea más chico).
-    # Se ordena lexicográficamente por (distancia, índice local) para que los
-    # empates exactos sean reproducibles e independientes del número de ranks.
     kk = min(k, n_local)
-    local_idx = np.broadcast_to(np.arange(n_local, dtype=np.int64), dists_sq.shape)
-    top_dist, top_idx = _lex_topk(dists_sq, local_idx, kk)
-    out_dist[:, :kk] = top_dist
-    out_idx[:, :kk] = top_idx   # índice LOCAL; el offset global lo añade el caller
+    part = np.argpartition(dists_sq, kk - 1, axis=1)[:, :kk]   # (n_test, kk)
+    rows = np.arange(n_test)[:, None]
+
+    out_dist[:, :kk] = dists_sq[rows, part]
+    out_idx[:, :kk] = part   # índice LOCAL; el offset global lo añade el caller
     return out_dist, out_idx
 
 
@@ -88,15 +77,16 @@ def merge_topk(dist_a, idx_a, dist_b, idx_b, k):
     Esta es la operación de combinación de la reducción en árbol. Es asociativa
     y conmutativa, por eso puede aplicarse en un árbol binario de log(p) pasos:
     concatena los 2K candidatos de ambas listas y se queda con los K de menor
-    distancia y, ante empate exacto, menor índice global. Esta regla hace que
-    la operación sea determinista, asociativa y conmutativa: el resultado solo
-    depende del conjunto de candidatos, no del orden del árbol de reducción.
+    distancia, arrastrando sus índices.
 
     Todos los arrays tienen forma (n_test, K). Devuelve (n_test, K).
     """
     dist = np.concatenate([dist_a, dist_b], axis=1)   # (n_test, 2K)
     idx = np.concatenate([idx_a, idx_b], axis=1)      # (n_test, 2K)
-    return _lex_topk(dist, idx, k)
+
+    part = np.argpartition(dist, k - 1, axis=1)[:, :k]   # K mejores de los 2K
+    rows = np.arange(dist.shape[0])[:, None]
+    return dist[rows, part], idx[rows, part]
 
 
 def majority_vote(k_labels, k_dist, n_classes=10):

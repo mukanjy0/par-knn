@@ -1,7 +1,0 @@
-__pycache__/
-*.pyc
-.ipynb_checkpoints/
-experiments/results/*.csv
-docs/figures/*.png
-.DS_Store
-.venv/

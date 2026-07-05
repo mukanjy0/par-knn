@@ -40,10 +40,10 @@ report/**/*.toc
 # Results/data large files
 logs/
 results/
-khipu_v4_logs/
-khipu_v4_results/
-khipu_v5_logs/
-khipu_v5_results/
+khipu_v2_logs/
+khipu_v2_results/
+khipu_v3_logs/
+khipu_v3_results/
 khipu_logs/
 *.swp
 *.swo
