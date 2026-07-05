@@ -1,4 +1,4 @@
-# Khipu and Slurm Workflow for KNN-MPI v4
+# Khipu and Slurm Workflow for KNN-MPI v5
 
 This guide avoids SSH automation. Run these commands manually and do not put passwords in scripts or prompts.
 
@@ -9,14 +9,14 @@ From your local machine, adjust the username and path:
 ```bash
 cd /path/to/proyecto-CPD
 rsync -av --exclude ".git" --exclude ".venv" --exclude "results" \
-  knn-mpi-parallel-v4-slurm/ USER@KHIPU_HOST:~/knn-mpi-parallel-v4-slurm/
+  knn-mpi-parallel-v5-slurm/ USER@KHIPU_HOST:~/knn-mpi-parallel-v5-slurm/
 ```
 
 ## 2. SSH and inspect the environment
 
 ```bash
 ssh USER@KHIPU_HOST
-cd ~/knn-mpi-parallel-v4-slurm
+cd ~/knn-mpi-parallel-v5-slurm
 pwd
 python3 --version
 which python3
@@ -68,17 +68,17 @@ an environment/network issue, not a project failure. Use one of these options.
 On your local machine with internet access:
 
 ```bash
-cd knn-mpi-parallel-v4-slurm
+cd knn-mpi-parallel-v5-slurm
 python -m pip download -r requirements.txt -d wheelhouse \
   --platform manylinux2014_x86_64 --python-version 310 --implementation cp \
   --abi cp310 --only-binary=:all:
-rsync -av wheelhouse/ USER@KHIPU_HOST:~/knn-mpi-parallel-v4-slurm/wheelhouse/
+rsync -av wheelhouse/ USER@KHIPU_HOST:~/knn-mpi-parallel-v5-slurm/wheelhouse/
 ```
 
 Then on Khipu:
 
 ```bash
-cd ~/knn-mpi-parallel-v4-slurm
+cd ~/knn-mpi-parallel-v5-slurm
 module load python3/3.10.2
 PIP_OFFLINE=1 WHEELHOUSE=wheelhouse bash scripts/khipu_setup_env.sh
 ```
@@ -126,7 +126,7 @@ Before every `sbatch`, make sure you submit from the same directory where this
 check succeeds:
 
 ```bash
-cd ~/knn-mpi-parallel-v4-slurm
+cd ~/knn-mpi-parallel-v5-slurm
 test -x "$PWD/.venv/bin/python"
 "$PWD/.venv/bin/python" -c "import numpy, sklearn, mpi4py; print('slurm python ok')"
 ```
@@ -136,7 +136,7 @@ the project `.venv` was created with Khipu's old system Python. Recreate it afte
 loading the Python 3.10 module:
 
 ```bash
-cd ~/knn-mpi-parallel-v4-slurm
+cd ~/knn-mpi-parallel-v5-slurm
 module load python3/3.10.2
 RECREATE_VENV=1 bash scripts/khipu_setup_env.sh
 .venv/bin/python --version
@@ -153,6 +153,8 @@ If MPI launching is allowed only inside Slurm, skip direct `mpirun` on the acces
 
 This benchmark uses fixed-size train/test loading, where the original digits
 dataset is split first and augmentation happens separately inside each split.
+The timed MPI code keeps the v5 collective structure:
+`Scatterv + Bcast + Reduce(custom MergeTopK)`.
 For strong scaling, the MPI `p=1` run is the baseline. The aggregation script
 uses the median of the three runs for `t_total`, speedup, efficiency, and plots.
 
@@ -273,8 +275,8 @@ sbatch --partition=standard --time=02:00:00 \
 
 ```bash
 squeue -u "$USER"
-tail -f logs/knn_mpi_v4_bench_JOBID.out
-tail -f logs/knn_mpi_v4_bench_JOBID.err
+tail -f logs/knn_mpi_v5_bench_JOBID.out
+tail -f logs/knn_mpi_v5_bench_JOBID.err
 scancel JOBID
 ```
 
@@ -285,16 +287,16 @@ Replace `JOBID` with the numeric job id.
 From your local machine:
 
 ```bash
-rsync -av USER@KHIPU_HOST:~/knn-mpi-parallel-v4-slurm/results/ ./khipu_v4_results/
-rsync -av USER@KHIPU_HOST:~/knn-mpi-parallel-v4-slurm/logs/ ./khipu_v4_logs/
+rsync -av USER@KHIPU_HOST:~/knn-mpi-parallel-v5-slurm/results/ ./khipu_v5_results/
+rsync -av USER@KHIPU_HOST:~/knn-mpi-parallel-v5-slurm/logs/ ./khipu_v5_logs/
 ```
 
-## 9. Aggregate and plot locally
+## 10. Aggregate and plot locally
 
 If the Slurm job completed, it already produced `summary.csv` and figures. To rerun locally:
 
 ```bash
-cd knn-mpi-parallel-v4-slurm
+cd knn-mpi-parallel-v5-slurm
 python scripts/aggregate_results.py path/to/raw_results.csv --out-dir path/to/output_dir
 python scripts/plot_results.py path/to/output_dir/summary.csv --out-dir path/to/output_dir/figures
 python scripts/check_results.py path/to/raw_results.csv

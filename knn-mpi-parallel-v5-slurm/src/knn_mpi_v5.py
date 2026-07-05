@@ -1,15 +1,16 @@
 """
-KNN-MPI v4 Slurm-ready benchmark implementation.
+KNN-MPI v5 Slurm-ready benchmark implementation.
 
-This version preserves the v4 algorithm:
-  1. split the training set across MPI ranks with explicit Send/Recv,
-  2. broadcast the full test set with an explicit recursive-doubling tree,
+This version preserves the clean v5 algorithm:
+  1. distribute the training set with MPI Scatterv,
+  2. replicate the full test set with MPI Bcast,
   3. compute local partial Top-K candidates,
-  4. reduce partial Top-K candidates with an explicit binary tree.
+  4. combine partial Top-K candidates with MPI Reduce and a custom MergeTopK op.
 
-The surrounding CLI and result format mirror the working v3 Khipu workflow:
+The surrounding CLI and result format mirror the established Slurm/Khipu workflow:
 measured repetitions, optional warm-up, CSV append output, JSON output, timing
-by phase, rank compute statistics, FLOPs, and reproducible metadata.
+by phase, FLOPs, reproducible dataset arguments, and prediction dumps for
+correctness checks.
 """
 import os
 
@@ -23,7 +24,6 @@ os.environ.setdefault("BLIS_NUM_THREADS", "1")
 import argparse
 import csv
 import json
-import math
 from pathlib import Path
 import socket
 import subprocess
@@ -36,6 +36,17 @@ from mpi4py import MPI
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.data_loader import load_scaled_digits
 from utils.knn_kernel import local_topk_batch, majority_vote, merge_topk
+
+
+CSV_FIELDS = [
+    "timestamp", "hostname", "git_commit", "command",
+    "mode", "n", "p", "k", "rep",
+    "n_train", "n_test", "n_features",
+    "t_total", "t_bcast", "t_scatter", "t_gather", "t_comm",
+    "t_comp", "t_comp_max", "t_comp_mean", "t_comp_min", "t_comp_std",
+    "accuracy", "flops", "flops_per_sec",
+    "speedup", "efficiency",
+]
 
 
 def add_dataset_args(parser):
@@ -80,27 +91,10 @@ def reported_n(args, n_train, n_test):
     return n_train + n_test
 
 
-TAG_TRAIN_X = 10
-TAG_TRAIN_Y = 11
-TAG_TEST = 20
-TAG_TOPK_DIST = 30
-TAG_TOPK_IDX = 31
-
-CSV_FIELDS = [
-    "timestamp", "hostname", "git_commit", "command",
-    "mode", "n", "p", "k", "rep",
-    "n_train", "n_test", "n_features",
-    "t_total", "t_bcast", "t_scatter", "t_gather", "t_comm",
-    "t_comp", "t_comp_max", "t_comp_mean", "t_comp_min", "t_comp_std",
-    "accuracy", "flops", "flops_per_sec",
-    "speedup", "efficiency",
-]
-
-
 def block_counts_displs(n, size):
     counts = np.array([n // size + (1 if r < n % size else 0)
-                       for r in range(size)], dtype=np.int64)
-    displs = np.array([int(np.sum(counts[:r])) for r in range(size)], dtype=np.int64)
+                       for r in range(size)], dtype=np.int32)
+    displs = np.array([int(np.sum(counts[:r])) for r in range(size)], dtype=np.int32)
     return counts, displs
 
 
@@ -141,79 +135,16 @@ def get_git_commit():
         return "unknown"
 
 
-def scatter_train_explicit(comm, X_train_full, y_train_full, n_train, n_features):
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-    counts, displs = block_counts_displs(n_train, size)
-    local_n = int(counts[rank])
-    offset = int(displs[rank])
+def make_merge_topk_op(k):
+    def _merge(invec, inoutvec, datatype):
+        a = np.frombuffer(invec, dtype=np.float64).reshape(-1, k, 2)
+        b = np.frombuffer(inoutvec, dtype=np.float64).reshape(-1, k, 2)
+        merged_dist, merged_idx = merge_topk(a[:, :, 0], a[:, :, 1],
+                                             b[:, :, 0], b[:, :, 1], k)
+        b[:, :, 0] = merged_dist
+        b[:, :, 1] = merged_idx
 
-    local_x = np.empty((local_n, n_features), dtype=np.float64)
-    local_y = np.empty(local_n, dtype=np.int64)
-
-    if rank == 0:
-        local_x[:] = X_train_full[offset:offset + local_n]
-        local_y[:] = y_train_full[offset:offset + local_n]
-        for r in range(1, size):
-            r_lo = int(displs[r])
-            r_hi = r_lo + int(counts[r])
-            comm.Send(np.ascontiguousarray(X_train_full[r_lo:r_hi]), dest=r, tag=TAG_TRAIN_X)
-            comm.Send(np.ascontiguousarray(y_train_full[r_lo:r_hi]), dest=r, tag=TAG_TRAIN_Y)
-    else:
-        comm.Recv(local_x, source=0, tag=TAG_TRAIN_X)
-        comm.Recv(local_y, source=0, tag=TAG_TRAIN_Y)
-
-    return local_x, local_y, offset
-
-
-def bcast_test_tree(comm, X_test_full, n_test, n_features):
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-
-    if rank == 0:
-        x_test = X_test_full
-    else:
-        x_test = np.empty((n_test, n_features), dtype=np.float64)
-
-    n_steps = math.ceil(math.log2(size)) if size > 1 else 0
-    for h in range(1, n_steps + 1):
-        half = 1 << (h - 1)
-        if rank < half:
-            dest = rank + half
-            if dest < size:
-                comm.Send(x_test, dest=dest, tag=TAG_TEST)
-        elif half <= rank < (1 << h):
-            src = rank - half
-            comm.Recv(x_test, source=src, tag=TAG_TEST)
-
-    return x_test
-
-
-def reduce_topk_tree(comm, topk_dist, topk_idx, n_test, k):
-    rank = comm.Get_rank()
-    size = comm.Get_size()
-    n_steps = math.ceil(math.log2(size)) if size > 1 else 0
-
-    for h in range(1, n_steps + 1):
-        block = 1 << h
-        half = 1 << (h - 1)
-        if rank % block == half:
-            parent = rank - half
-            comm.Send(topk_dist, dest=parent, tag=TAG_TOPK_DIST)
-            comm.Send(topk_idx, dest=parent, tag=TAG_TOPK_IDX)
-            break
-        if rank % block == 0:
-            child = rank + half
-            if child < size:
-                recv_dist = np.empty((n_test, k), dtype=np.float64)
-                recv_idx = np.empty((n_test, k), dtype=np.int64)
-                comm.Recv(recv_dist, source=child, tag=TAG_TOPK_DIST)
-                comm.Recv(recv_idx, source=child, tag=TAG_TOPK_IDX)
-                topk_dist, topk_idx = merge_topk(
-                    topk_dist, topk_idx, recv_dist, recv_idx, k
-                )
-
-    return topk_dist, topk_idx
+    return MPI.Op.Create(_merge, commute=True)
 
 
 def local_topk_test_batched(x_test, local_x, k, batch_size):
@@ -234,21 +165,43 @@ def local_topk_test_batched(x_test, local_x, k, batch_size):
 def run_one_rep(comm, X_train, y_train, X_test, y_test,
                 n_train, n_features, n_test, k, test_batch_size):
     rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    counts, displs = block_counts_displs(n_train, size)
+    local_n = int(counts[rank])
+    offset = int(displs[rank])
 
     comm.Barrier()
     t_total_start = MPI.Wtime()
 
+    local_x = np.empty((local_n, n_features), dtype=np.float64)
+    local_y = np.empty(local_n, dtype=np.int64)
+    send_x = np.ascontiguousarray(X_train, dtype=np.float64) if rank == 0 else None
+    send_y = np.ascontiguousarray(y_train, dtype=np.int64) if rank == 0 else None
+
     comm.Barrier()
     t0 = MPI.Wtime()
-    local_x, local_y, offset = scatter_train_explicit(
-        comm, X_train, y_train, n_train, n_features
+    comm.Scatterv(
+        [send_x, counts * n_features, displs * n_features, MPI.DOUBLE],
+        local_x,
+        root=0,
+    )
+    comm.Scatterv(
+        [send_y, counts, displs, MPI.INT64_T],
+        local_y,
+        root=0,
     )
     comm.Barrier()
     t_scatter_local = MPI.Wtime() - t0
 
+    if rank == 0:
+        x_test = np.ascontiguousarray(X_test, dtype=np.float64)
+    else:
+        x_test = np.empty((n_test, n_features), dtype=np.float64)
+
     comm.Barrier()
     t0 = MPI.Wtime()
-    x_test = bcast_test_tree(comm, X_test, n_test, n_features)
+    comm.Bcast(x_test, root=0)
     comm.Barrier()
     t_bcast_local = MPI.Wtime() - t0
 
@@ -261,11 +214,18 @@ def run_one_rep(comm, X_train, y_train, X_test, y_test,
     comm.Barrier()
     t_comp_local = MPI.Wtime() - t0
 
+    sendbuf = np.empty((n_test, k, 2), dtype=np.float64)
+    sendbuf[:, :, 0] = topk_dist
+    sendbuf[:, :, 1] = topk_idx.astype(np.float64)
+    recvbuf = np.empty((n_test, k, 2), dtype=np.float64) if rank == 0 else None
+    merge_op = make_merge_topk_op(k)
+
     comm.Barrier()
     t0 = MPI.Wtime()
-    topk_dist, topk_idx = reduce_topk_tree(comm, topk_dist, topk_idx, n_test, k)
+    comm.Reduce(sendbuf, recvbuf, op=merge_op, root=0)
     comm.Barrier()
     t_reduce_local = MPI.Wtime() - t0
+    merge_op.Free()
 
     t_total_local = MPI.Wtime() - t_total_start
 
@@ -276,7 +236,9 @@ def run_one_rep(comm, X_train, y_train, X_test, y_test,
     all_t_comp = comm.gather(t_comp_local, root=0)
 
     if rank == 0:
-        y_pred = majority_vote(y_train[topk_idx], topk_dist)
+        global_dist = recvbuf[:, :, 0]
+        global_idx = recvbuf[:, :, 1].astype(np.int64)
+        y_pred = majority_vote(y_train[global_idx], global_dist)
         t_comp_arr = np.array(all_t_comp)
         accuracy = float(np.mean(y_pred == y_test))
         return y_pred, {
@@ -297,7 +259,7 @@ def run_one_rep(comm, X_train, y_train, X_test, y_test,
 
 def main():
     parser = argparse.ArgumentParser(
-        description="KNN-MPI v4: training decomposition + explicit Top-K tree reduction"
+        description="KNN-MPI v5: Scatterv + Bcast + Reduce(custom MergeTopK)"
     )
     add_dataset_args(parser)
     parser.add_argument("--k", type=int, default=3, help="Number of neighbors")
@@ -321,6 +283,11 @@ def main():
         n_test = X_test.shape[0]
         if args.k > n_train:
             raise SystemExit(f"k={args.k} > n_train={n_train}: impossible")
+        if n_train >= 2**53:
+            raise SystemExit(
+                f"n_train={n_train} >= 2**53: indices cannot be packed exactly "
+                "in the float64 reduction buffer"
+            )
         metadata = {
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "hostname": socket.gethostname(),

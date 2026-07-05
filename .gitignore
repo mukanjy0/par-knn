@@ -23,6 +23,7 @@ build/
 .ipynb_checkpoints/
 
 # LaTeX report build artifacts
+report/.matplotlib/
 report/**/*.aux
 report/**/*.bbl
 report/**/*.bcf
@@ -37,11 +38,13 @@ report/**/*.synctex.gz
 report/**/*.toc
 
 # Results/data large files
-results/
-khipu_v4_results/
 logs/
-khipu_logs/
+results/
 khipu_v4_logs/
+khipu_v4_results/
+khipu_v5_logs/
+khipu_v5_results/
+khipu_logs/
 *.swp
 *.swo
 *.csv

@@ -1,0 +1,17 @@
+\begin{table}[H]
+\centering
+\begin{tabular}{rrrrrrr}
+\toprule
+$p$ & V4 $n_{train}$ & V4 $T$ (s) & V4 GF/s & V5 $n_{train}$ & V5 $T$ (s) & V5 GF/s \\
+\midrule
+1 & 3125 & 0.243 & 12.4 & 3125 & 1.067 & 2.8 \\
+2 & 6250 & 0.387 & 15.8 & 6250 & 1.183 & 5.1 \\
+4 & 12500 & 0.406 & 30.2 & 12500 & 1.263 & 9.6 \\
+8 & 25000 & 0.529 & 46.8 & 25000 & 1.326 & 18.3 \\
+16 & 50000 & 0.917 & 53.9 & 50000 & 1.456 & 33.6 \\
+32 & 100000 & 2.019 & 49.9 & 100000 & 2.292 & 43.1 \\
+\bottomrule
+\end{tabular}
+\caption{Escalabilidad débil con 3125 puntos de entrenamiento por proceso, $n_{test}=5000$, $k=3$.}
+\label{tab:weak}
+\end{table}

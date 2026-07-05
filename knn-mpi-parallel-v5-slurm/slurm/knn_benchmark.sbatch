@@ -17,7 +17,7 @@
 # Accuracy/correctness example:
 #   sbatch --partition=standard --time=02:00:00 --export=ALL,BENCHMARK_MODE=accuracy,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 8 32",N_TOTALS="10000 50000 100000",TEST_SIZE=0.2,K=3,REPS=1,TEST_BATCH_SIZE=250,SPLIT_SEED=42,AUGMENT_SEED=123 slurm/knn_benchmark.sbatch
 
-#SBATCH --job-name=knn_mpi_v4_bench     # Short name shown by squeue
+#SBATCH --job-name=knn_mpi_v5_bench     # Short name shown by squeue
 #SBATCH --partition=standard            # Khipu CPU partition for general benchmarks
 #SBATCH --nodes=1                       # Keep one node unless the course asks multi-node
 #SBATCH --ntasks=32                     # Account CPU limit and maximum MPI tasks for this matrix
@@ -104,7 +104,7 @@ case "$BENCHMARK_MODE" in
 esac
 
 STAMP="${STAMP:-$(date +%Y%m%d_%H%M%S)_job${SLURM_JOB_ID:-local}}"
-OUT_DIR="${OUT_DIR:-results/khipu_v4_${BENCHMARK_MODE}_${STAMP}}"
+OUT_DIR="${OUT_DIR:-results/khipu_v5_${BENCHMARK_MODE}_${STAMP}}"
 CSV="${CSV:-${OUT_DIR}/raw_results.csv}"
 
 mkdir -p "$OUT_DIR" logs
@@ -195,9 +195,9 @@ run_mpi_fixed() {
   local pred_out="${3:-}"
   local cmd=()
   if [ "$MPI_LAUNCHER" = "srun" ]; then
-    cmd=(srun --ntasks="$p" --cpus-per-task=1 "$PYTHON" src/knn_mpi_v4.py)
+    cmd=(srun --ntasks="$p" --cpus-per-task=1 "$PYTHON" src/knn_mpi_v5.py)
   else
-    cmd=("$MPI_LAUNCHER" -n "$p" "$PYTHON" src/knn_mpi_v4.py)
+    cmd=("$MPI_LAUNCHER" -n "$p" "$PYTHON" src/knn_mpi_v5.py)
   fi
   cmd+=(
     --n-train "$n_train" --n-test "$N_TEST" --orig-test-size "$ORIG_TEST_SIZE"
@@ -216,9 +216,9 @@ run_mpi_total() {
   local pred_out="${3:-}"
   local cmd=()
   if [ "$MPI_LAUNCHER" = "srun" ]; then
-    cmd=(srun --ntasks="$p" --cpus-per-task=1 "$PYTHON" src/knn_mpi_v4.py)
+    cmd=(srun --ntasks="$p" --cpus-per-task=1 "$PYTHON" src/knn_mpi_v5.py)
   else
-    cmd=("$MPI_LAUNCHER" -n "$p" "$PYTHON" src/knn_mpi_v4.py)
+    cmd=("$MPI_LAUNCHER" -n "$p" "$PYTHON" src/knn_mpi_v5.py)
   fi
   cmd+=(
     --n-total "$n_total" --test-size "$TEST_SIZE"
