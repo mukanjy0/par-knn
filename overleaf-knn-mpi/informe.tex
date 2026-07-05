@@ -1,753 +1,882 @@
 \documentclass[11pt,a4paper]{article}
 
-% --- Codificación y fuentes ---
-% xelatex maneja UTF-8 nativamente; no necesita inputenc/fontenc
-\usepackage[spanish]{babel}
-
-% --- Layout ---
-\usepackage[margin=2.2cm,top=2.5cm,bottom=2.5cm]{geometry}
-\usepackage{setspace}
-\setstretch{1.15}
-\usepackage{microtype}
-
-% --- Color, gráficos, hipervínculos ---
-\usepackage{xcolor}
-\definecolor{darkblue}{RGB}{26,58,92}
-\definecolor{midblue}{RGB}{42,90,140}
-\definecolor{lightgray}{RGB}{245,245,245}
-\definecolor{darkgray}{RGB}{80,80,80}
-\definecolor{accentred}{RGB}{200,50,50}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage[spanish,english]{babel}
+\usepackage{amsmath, amssymb, amsfonts}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{hyperref}
 \usepackage{graphicx}
 \usepackage{float}
-\usepackage[hidelinks,colorlinks=true,linkcolor=midblue,urlcolor=midblue,citecolor=midblue]{hyperref}
+\usepackage[ruled,vlined,linesnumbered]{algorithm2e}
 
-% --- Tablas ---
-\usepackage{booktabs}
-\usepackage{array}
-\usepackage{tabularx}
-\usepackage{multirow}
-\renewcommand{\arraystretch}{1.15}
+\geometry{margin=2.5cm}
 
-% --- Matemáticas y unidades ---
-\usepackage{amsmath,amssymb}
-\usepackage{siunitx}
-
-% --- Pseudocódigo (estilo del ejemplo del usuario) ---
-\usepackage{algorithm}
-\usepackage{algpseudocode}
-\algrenewcommand\algorithmicrequire{\textbf{Input:}}
-\algrenewcommand\algorithmicensure{\textbf{Output:}}
-\algrenewcommand\textproc{\textsc}
-% Comando "pardo" para for paralelos (estilo PRAM)
-\algnewcommand\algorithmicpardo{\textbf{\color{accentred}pardo}}
-\algnewcommand\Pardo{\algorithmicpardo}
-\algdef{SE}[FOR]{ParFor}{EndParFor}[1]%
-  {\algorithmicfor\ #1\ \algorithmicpardo}%
-  {\algorithmicend\ \algorithmicfor}
-
-% --- Código fuente ---
-\usepackage{listings}
-\lstset{
-  basicstyle=\ttfamily\footnotesize,
-  backgroundcolor=\color{lightgray},
-  frame=single,
-  framerule=0pt,
-  rulecolor=\color{lightgray},
-  keywordstyle=\color{midblue}\bfseries,
-  commentstyle=\color{darkgray}\itshape,
-  stringstyle=\color{accentred},
-  showstringspaces=false,
-  breaklines=true,
-  columns=fullflexible,
-  language=Python,
-  morekeywords={comm,bcast,Bcast,Scatterv,Gatherv,MPI,mpirun,Wtime,Barrier},
-  xleftmargin=8pt,
-  xrightmargin=4pt,
-  aboveskip=8pt,
-  belowskip=8pt
+\title{Análisis PRAM y Métricas de un KNN Paralelo con MPI}
+\author{
+Ian González \and Eduardo Aragon \and Jorge Quenta
 }
+\date{Mayo 2026}
 
-% --- Encabezados y pie ---
-\usepackage{fancyhdr}
-\pagestyle{fancy}
-\fancyhf{}
-\fancyhead[L]{\small\textcolor{darkgray}{Paralelización de KNN con MPI}}
-\fancyhead[R]{\small\textcolor{darkgray}{Programación Paralela}}
-\fancyfoot[C]{\thepage}
-\renewcommand{\headrulewidth}{0.4pt}
-\renewcommand{\footrulewidth}{0pt}
-
-% --- Títulos de sección ---
-\usepackage{titlesec}
-\titleformat{\section}{\Large\bfseries\color{darkblue}}{\thesection}{0.6em}{}
-\titleformat{\subsection}{\large\bfseries\color{midblue}}{\thesubsection}{0.5em}{}
-\titleformat{\subsubsection}{\normalsize\bfseries\color{midblue}}{\thesubsubsection}{0.5em}{}
-\titlespacing*{\section}{0pt}{18pt}{8pt}
-\titlespacing*{\subsection}{0pt}{14pt}{6pt}
-
-% --- Caja para destacar versiones beta ---
-\usepackage[most]{tcolorbox}
-\newtcolorbox{betabox}[1]{
-  colback=lightgray,
-  colframe=midblue,
-  fonttitle=\bfseries\color{white},
-  coltitle=white,
-  title=#1,
-  boxrule=0pt,
-  arc=2pt,
-  left=8pt,right=8pt,top=4pt,bottom=4pt,
-  before skip=10pt, after skip=10pt
-}
-
-% ============================================================
 \begin{document}
-% ============================================================
 
-% --- Portada ---
-\begin{titlepage}
-\centering
-\vspace*{2cm}
-{\Huge\bfseries\color{darkblue} Paralelización de KNN con MPI\par}
-\vspace{0.4cm}
-{\Large\itshape sobre el dataset \texttt{load\_digits}\par}
-\vspace{2cm}
-\rule{0.8\textwidth}{0.8pt}\\[0.5cm]
-\begin{tabular}{rl}
-\textbf{Curso:} & Programación Paralela \\[2pt]
-\textbf{Fecha:} & Abril 2026 \\[2pt]
-\textbf{Hardware:} & Apple M2 Pro (8 P-cores + 4 E-cores) \\[2pt]
-\textbf{Software:} & Open MPI 5.0.9, Python, mpi4py \\[2pt]
-\textbf{Repositorio:} & \texttt{knn-mpi-parallel/} \\
-\end{tabular}\\[0.3cm]
-\rule{0.8\textwidth}{0.8pt}\\
-\vspace{1.5cm}
-\begin{minipage}{0.85\textwidth}
-\textbf{Resumen.} Se paraleliza el algoritmo KNN del archivo \texttt{knn\_digits\_sec.py} sobre el dataset \texttt{load\_digits} (64 features, 10 clases) usando MPI. La estrategia sigue el DAG del enunciado: \texttt{bcast} del entrenamiento, \texttt{scatter} del testeo, cómputo local independiente y \texttt{gather} de predicciones. El proyecto se desarrolló en \textbf{tres versiones beta} documentando el proceso iterativo, incluyendo el descubrimiento y resolución de un problema de \emph{oversubscription} de threads BLAS común al combinar MPI con NumPy. La implementación final alcanza \textbf{6.14$\times$ de speedup} con 8 procesos y mantiene 76\,\% de eficiencia, con accuracy preservada idéntica al secuencial en todas las configuraciones.
-\end{minipage}
-\vfill
-\end{titlepage}
+\maketitle
 
-\tableofcontents
-\newpage
+\begin{abstract}
+Este documento presenta el diseño y análisis teórico de una versión paralela del algoritmo
+K-Nearest Neighbors (KNN) usando un modelo de memoria distribuida con MPI. El algoritmo
+particiona la data de entrenamiento entre los procesos, replica la data de test mediante una
+difusión en árbol, calcula localmente los mejores $K$ vecinos por proceso y combina los resultados
+mediante una reducción binaria de listas Top-$K$. Se derivan las expresiones teóricas de tiempo
+de cómputo, tiempo de comunicación, speedup, eficiencia, FLOPs y escalabilidad fuerte y débil.
+\end{abstract}
 
-% ============================================================
-\section{Resultados principales}
-% ============================================================
+\section{Introducción}
 
-La Tabla~\ref{tab:resumen} sintetiza el desempeño de la implementación final (v3) sobre el caso $n_{total}=40\,000$, $k=3$. La accuracy se mantiene idéntica al baseline secuencial en todas las configuraciones, y el speedup escala consistentemente con el número de procesos hasta llegar al límite de 8 P-cores físicos.
+K-Nearest Neighbors (KNN) es un algoritmo supervisado de clasificación que asigna a un punto
+de prueba la etiqueta mayoritaria entre sus $K$ vecinos más cercanos en el conjunto de
+entrenamiento. Dado un conjunto de entrenamiento con $n_{tr}$ puntos, un conjunto de prueba
+con $n_{te}$ puntos y una dimensión $d$, el costo principal del algoritmo secuencial se encuentra
+en el cálculo de distancias entre todos los puntos de prueba y todos los puntos de entrenamiento.
+
+La versión paralela propuesta distribuye el conjunto de entrenamiento entre $p$ procesos. Cada
+proceso recibe aproximadamente $n_{tr}/p$ puntos de entrenamiento, mientras que todos los
+procesos reciben el conjunto completo de prueba. Luego, cada proceso calcula los mejores
+$K$ vecinos locales para cada punto de prueba. Finalmente, los resultados locales se combinan
+mediante una reducción binaria, de manera que el proceso raíz obtiene los mejores $K$ vecinos
+globales para cada punto de prueba y realiza la votación mayoritaria.
+
+\section{Notación}
 
 \begin{table}[H]
 \centering
-\caption{Resultados principales sobre Apple M2 Pro ($n_{total}=40\,000$, $k=3$).}
-\label{tab:resumen}
-\small
-\begin{tabular}{r r r r r r}
+\begin{tabular}{ll}
 \toprule
-$p$ & $T$ (ms) & Speedup & Eficiencia & GFLOPs/s & Accuracy \\
+Símbolo & Descripción \\
 \midrule
-1 & 2\,362 & 1.00$\times$ & 100\,\% & 20.9 & 1.0000 \\
-2 & 1\,134 & 2.08$\times$ & 104\,\% & 43.6 & 1.0000 \\
-4 &    629 & 3.76$\times$ & 94\,\% & 78.9 & 1.0000 \\
-8 &    385 & 6.14$\times$ & 76\,\% & 130.0 & 1.0000 \\
+$n_{tr}$ & Número de puntos de entrenamiento \\
+$n_{te}$ & Número de puntos de prueba \\
+$d$ & Número de dimensiones/features \\
+$p$ & Número de procesos MPI \\
+$s$ & Identificador del proceso, con $1 \leq s \leq p$ \\
+$K$ & Número de vecinos considerados por KNN \\
+$\ell$ & Número de puntos de entrenamiento por proceso, $\ell = n_{tr}/p$ \\
+$\alpha$ & Latencia de envío de un mensaje \\
+$\beta$ & Tiempo de transmisión por byte \\
+$B_x$ & Bytes por coordenada de un punto \\
+$B_c$ & Bytes por candidato Top-$K$ \\
 \bottomrule
 \end{tabular}
+\caption{Notación utilizada en el análisis.}
 \end{table}
 
-La fracción serial estimada por el modelo de Amdahl es $f=2.24\,\%$, lo que confirma a KNN como un problema \emph{embarrassingly parallel} en su núcleo. La cantidad óptima de procesos estimada es $p^* \approx 16$ sobre el M2 Pro, limitada en la práctica por la cantidad de cores físicos y el sobrecosto de coordinación MPI por proceso.
-
-% ============================================================
-\section{Modelo PRAM y código en Python con directivas MPI}\label{sec:a}
-% ============================================================
-
-\subsection*{Modelo PRAM}
-
-El algoritmo se modela como \textbf{CREW-PRAM} (\emph{Concurrent Read, Exclusive Write}) por las siguientes razones:
-
-\begin{itemize}
-\item \textbf{Concurrent Read:} todos los procesos leen el mismo conjunto de entrenamiento $X_{tr}$, replicado en cada \emph{rank} mediante \texttt{comm.Bcast}. La lectura concurrente sobre la misma estructura no genera conflictos.
-\item \textbf{Exclusive Write:} cada proceso calcula y escribe predicciones únicamente para su fracción $n_{te}/p$ del conjunto de testeo. Las posiciones de escritura del vector global de predicciones son disjuntas por construcción.
-\end{itemize}
-
-% ─── ALGORITMO 1: Modelo PRAM (en función de n y p) ─────────────
-\begin{algorithm}[H]
-\small
-\caption{KNN paralelo en modelo PRAM (en función de $n$ y $p$)}\label{alg:knn-pram}
-\begin{algorithmic}[1]
-\Require $X_{tr}[1..n_{tr},\,1..d]$, $y_{tr}[1..n_{tr}]$, $X_{te}[1..n_{te},\,1..d]$, $k$, $p$
-\Ensure $y_{pred}[1..n_{te}]$
-\Statex
-\State \textit{// Fase 1: Difusión del entrenamiento}
-\ParFor{$1 \leq q \leq p$}
-    \State $X_{tr}^{(q)},\ y_{tr}^{(q)} \gets \textsc{Broadcast}(X_{tr},\ y_{tr})$
-\EndParFor
-\State \Comment{Costo: $O(\log p \cdot (\alpha + n_{tr}\cdot d\cdot \beta))$}
-\Statex
-\State \textit{// Fase 2: Partición del testeo}
-\ParFor{$1 \leq q \leq p$}
-    \State $X_{te}^{(q)} \gets X_{te}\bigl[\,(q-1)\lceil n_{te}/p\rceil + 1\ :\ q\lceil n_{te}/p\rceil\,\bigr]$
-\EndParFor
-\State \Comment{Costo: $O(p\cdot \alpha + n_{te}\cdot d\cdot \beta)$}
-\Statex
-\State \textit{// Fase 3: Cómputo de distancias y $k$-vecinos (núcleo paralelo)}
-\ParFor{$1 \leq q \leq p$}
-    \ParFor{$1 \leq j \leq \lceil n_{te}/p\rceil$}
-        \For{$1 \leq \ell \leq n_{tr}$}
-            \State $D[j,\ell] \gets \sum_{m=1}^{d}\bigl(X_{te}^{(q)}[j,m] - X_{tr}[\ell,m]\bigr)^{2}$
-        \EndFor
-        \State $K \gets \textsc{ArgPartition}(D[j,\,1..n_{tr}],\ k)$
-        \State $y_{pred}^{(q)}[j] \gets \textsc{MajorityVote}(y_{tr}[K])$
-    \EndParFor
-\EndParFor
-\State \Comment{Costo: $O(n_{tr} \cdot n_{te} / p)$ operaciones aritméticas}
-\Statex
-\State \textit{// Fase 4: Recolección de predicciones}
-\ParFor{$1 \leq q \leq p$}
-    \State $\textsc{Gather}(y_{pred}^{(q)} \to y_{pred})$
-\EndParFor
-\State \Comment{Costo: $O(p\cdot \alpha + n_{te}\cdot \beta)$}
-\Statex
-\State \Return $y_{pred}$
-\end{algorithmic}
-\end{algorithm}
-
-El Algoritmo~\ref{alg:knn-pram} describe el procedimiento en el \textbf{modelo abstracto PRAM}, parametrizado en $n_{tr}$, $n_{te}$, $d$ y $p$. Cada fase declara su costo asintótico en función de estas variables, lo que permite verificar directamente la complejidad total $O(\log p \cdot n_{tr} d\, \beta) + O(n_{tr} n_{te}/p) + O(p\,\alpha)$. La distancia euclidiana aparece expandida como $\sum_{m=1}^{d}(\cdot)^2$ para hacer visible el factor $d$ que reaparece en el conteo de FLOPs del inciso (d).
-
-A continuación, el Algoritmo~\ref{alg:knn-mpi} muestra la \textbf{realización concreta en MPI}: la misma estructura lógica, pero escrita desde la perspectiva de un rank individual y usando las primitivas reales \texttt{Bcast}/\texttt{Scatterv}/\texttt{Gatherv} de la librería.
-
-% ─── ALGORITMO 2: Implementación MPI ────────────────────────────
-\begin{algorithm}[H]
-\small
-\caption{Implementación MPI del Algoritmo~\ref{alg:knn-pram} (vista por rank)}\label{alg:knn-mpi}
-\begin{algorithmic}[1]
-\Require $X_{tr} \in \mathbb{R}^{n_{tr}\times d}$, $y_{tr} \in \mathbb{Z}^{n_{tr}}$, $X_{te} \in \mathbb{R}^{n_{te}\times d}$, $k$, número de procesos $p$
-\Ensure $y_{pred} \in \mathbb{Z}^{n_{te}}$ \Comment{etiquetas predichas}
-\Statex
-\State \textit{// Fase 1: Difusión del entrenamiento (Bcast)}
-\ParFor{$i = 0$ \textbf{to} $p-1$}
-    \State \textsc{Bcast}$(X_{tr}, y_{tr})$ desde rank $0$ a proceso $i$ \Comment{$O(\log p \cdot (\alpha + n_{tr} d \beta))$}
-\EndParFor
-\Statex
-\State \textit{// Fase 2: Distribución del testeo (Scatter)}
-\ParFor{$i = 0$ \textbf{to} $p-1$}
-    \State $X_{te}^{(i)} \gets \textsc{Scatter}(X_{te},\ \text{bloque } i)$ \Comment{$O(p \cdot (\alpha + (n_{te}/p)\, d\, \beta))$}
-\EndParFor
-\Statex
-\State \textit{// Fase 3: Cómputo local independiente (paralelo)}
-\ParFor{$i = 0$ \textbf{to} $p-1$}
-    \ParFor{$j = 1$ \textbf{to} $|X_{te}^{(i)}|$}
-        \For{$\ell = 1$ \textbf{to} $n_{tr}$}
-            \State $D[j,\ell] \gets \|X_{te}^{(i)}[j] - X_{tr}[\ell]\|^2$ \Comment{distancia al cuadrado}
-        \EndFor
-        \State $K \gets \textsc{ArgPartition}(D[j,:],\ k)[1{:}k]$ \Comment{índices de los $k$ menores}
-        \State $L \gets y_{tr}[K]$
-        \State $y_{pred}^{(i)}[j] \gets \textsc{MajorityVote}(L)$
-    \EndParFor
-\EndParFor
-\State \Comment{Costo total de la fase 3: $O(n_{tr}\cdot n_{te}\,/\,p)$}
-\Statex
-\State \textit{// Fase 4: Recolección de predicciones (Gather)}
-\ParFor{$i = 0$ \textbf{to} $p-1$}
-    \State \textsc{Gather}$(y_{pred}^{(i)})$ hacia rank $0$ \Comment{$O(p \cdot (\alpha + k \beta))$}
-\EndParFor
-\Statex
-\State \Return $y_{pred}$ \Comment{ensamblado en rank $0$}
-\end{algorithmic}
-\end{algorithm}
-
-\subsection*{Mapeo del DAG a directivas MPI}
-
-La Tabla~\ref{tab:dag-mpi} muestra la correspondencia uno-a-uno entre los nodos del DAG del enunciado, las directivas MPI usadas en el código y la complejidad teórica de cada operación, donde $\alpha$ es la latencia (s/mensaje) y $\beta$ el inverso del ancho de banda (s/byte).
-
-\begin{table}[H]
-\centering
-\caption{Correspondencia entre el DAG, las directivas MPI y la complejidad asintótica.}\label{tab:dag-mpi}
-\small
-\begin{tabular}{l l l}
-\toprule
-\textbf{Nodo del DAG} & \textbf{Directiva MPI} & \textbf{Complejidad} \\
-\midrule
-Initial parameters & Carga en rank 0 & $O(n_{tr} d)$ \\
-Broadcast superior & \texttt{comm.Bcast(X\_train, root=0)} & $O(\log p \cdot (\alpha + n_{tr} d \beta))$ \\
-Scatter superior & \texttt{comm.Scatterv(X\_test, ...)} & $O(p \cdot (\alpha + (n_{te}/p)\, d\, \beta))$ \\
-dist + sort + k-NN & \texttt{knn\_predict\_batch} (local) & $O(n_{tr}\cdot n_{te}\,/\,p)$ \\
-Gather inferior & \texttt{comm.Gatherv(y\_pred\_local, ...)} & $O(p \cdot (\alpha + k \beta))$ \\
-Apply majority & Ensamblado en rank 0 & $O(n_{te})$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Se utilizan \texttt{Scatterv} y \texttt{Gatherv} (versiones de longitud variable) en lugar de \texttt{Scatter}/\texttt{Gather} fijas para soportar $n_{te}$ no divisible por $p$ sin padding artificial. La diferencia de carga entre el rank más cargado y el menos cargado es como máximo de un punto de testeo.
-
-\subsection*{Esqueleto del código}
-
-\begin{lstlisting}[language=Python]
-comm = MPI.COMM_WORLD
-rank, size = comm.Get_rank(), comm.Get_size()
-
-# 1. Rank 0 carga datos
-if rank == 0:
-    X_train, X_test, y_train, y_test = load_scaled_digits(args.n)
-
-# 2. BCAST entrenamiento  -----  O(log p (alpha + n_tr beta))
-comm.Bcast(X_train, root=0)
-comm.Bcast(y_train, root=0)
-
-# 3. SCATTERV testeo  ---------  O(p (alpha + n_te/p beta))
-counts = [n_test // size + (1 if i < n_test % size else 0) for i in range(size)]
-displs = [sum(counts[:i]) for i in range(size)]
-comm.Scatterv([X_test, counts*d, displs*d, MPI.DOUBLE], X_test_local, root=0)
-
-# 4. COMPUTO LOCAL  -----------  O(n_tr n_te / p)
-y_pred_local = knn_predict_batch(X_test_local, X_train, y_train, k)
-
-# 5. GATHERV predicciones  ----  O(p (alpha + k beta))
-comm.Gatherv(y_pred_local, [y_pred, counts, displs, MPI.LONG], root=0)
-\end{lstlisting}
-
-% ============================================================
-\section{Desarrollo en versiones beta}\label{sec:b}
-% ============================================================
-
-El proyecto se desarrolló iterativamente en tres versiones beta, cada una versionada en el repositorio. En las tres se valida que la \textbf{accuracy del modelo es idéntica al secuencial} para todos los valores de $p$, garantizando la corrección de la implementación.
-
-% ── BETA v1 ──────────────────────────────────────────────────
-\begin{betabox}{Beta v1 — Paralelización funcional con cómputo escalar}
-\textbf{Archivo:} \texttt{src/knn\_mpi\_v1.py} \\[2pt]
-\textbf{Objetivo:} validar la corrección del esquema MPI sin introducir variables.\\[2pt]
-\textbf{Implementación:} sigue directamente el DAG con \texttt{Bcast}, \texttt{Scatterv} y \texttt{Gatherv}; el cómputo local mantiene los \emph{loops} Python escalares del código original (\texttt{euclidean\_distance} elemento a elemento, \texttt{argsort} completo, \texttt{Counter.most\_common}).
-\end{betabox}
-
-\textbf{Validación numérica} (dataset original, $n=1797$, mediana sobre 3 corridas):
-
-\begin{table}[H]
-\centering
-\small
-\begin{tabular}{r r r r}
-\toprule
-$p$ & $T$ (s) & Speedup & Accuracy \\
-\midrule
-seq & 1.2060 & 1.00$\times$ & 0.9833 \\
-1 & 1.1994 & 1.01$\times$ & 0.9833 \\
-2 & 0.6218 & 1.94$\times$ & 0.9833 \\
-4 & 0.3245 & 3.72$\times$ & 0.9833 \\
-8 & 0.1690 & 7.14$\times$ & 0.9833 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Se obtiene \textbf{89\,\% de eficiencia a $p=8$}. El cómputo absorbe el 92--99\,\% del tiempo total, por lo que la comunicación es prácticamente despreciable. La accuracy de 0.9833 coincide con el secuencial, confirmando la implementación correcta de \texttt{bcast}/\texttt{scatter}/\texttt{gather}.
-
-% ── BETA v2 ──────────────────────────────────────────────────
-\begin{betabox}{Beta v2 — Vectorización del cómputo local}
-\textbf{Archivo:} \texttt{src/knn\_mpi\_v2.py} \\[2pt]
-\textbf{Objetivo:} eliminar el cuello de botella del Python interpretado en el cómputo de distancias.\\[2pt]
-\textbf{Tres optimizaciones aplicadas:}
-\begin{enumerate}
-\item \textbf{Distancias por GEMM con identidad de Lagrange:}
+En el análisis se asume que los datos de entrada son de tipo \texttt{float}, por lo que
+$B_x = 4$ bytes. Además, se representa cada candidato como un par
 \[
-\|a-b\|^2 = \|a\|^2 + \|b\|^2 - 2\,a^\top b
+(\text{distancia}, \text{índice})
 \]
-La matriz cruzada $X_{te}^{(i)} \cdot X_{tr}^\top$ se delega a BLAS. Se omite la $\sqrt{\cdot}$ porque preserva el orden y ahorra $n_{tr}\cdot n_{te}$ operaciones.
-\item \textbf{Top-$k$ con \texttt{argpartition}:} $O(n)$ por fila, en vez de $O(n\log n)$ de \texttt{argsort}.
-\item \textbf{Voto mayoritario vectorizado:} matriz \emph{one-hot} de votos + \texttt{argmax}, eliminando \texttt{Counter.most\_common}.
-\end{enumerate}
-\end{betabox}
+donde la distancia es un \texttt{float} y el índice es un \texttt{int}. Por tanto,
+\[
+B_c = 8 \text{ bytes}.
+\]
+Si se utiliza \texttt{double} o una estructura con padding, $B_c$ puede ser mayor.
 
-\textbf{Resultado de la vectorización:} el tiempo de cómputo a $p=1$ cayó de 1.20\,s (v1) a \textbf{0.0058\,s} (v2) --- aproximadamente \textbf{207$\times$ más rápido}.
+\section{Diseño paralelo}
 
-\textbf{Hallazgo importante.} Aunque la accuracy se mantuvo correcta, el speedup paralelo se degradó a partir de $p \geq 4$. A $n=40\,000$, $p=4$ daba $2.26\times$ y $p=8$ apenas $2.25\times$. El análisis de las repeticiones evidenció \textbf{varianza descontrolada} (CV hasta 100\,\%).
+\subsection{Idea general}
 
-\textbf{Causa raíz identificada.} BLAS multi-threaded (Apple Accelerate en macOS) por defecto usa todos los cores disponibles. Al lanzar \texttt{mpirun -n 8} se generaban 8 procesos $\times$ 8 threads BLAS = \textbf{64 threads compitiendo por 8 cores físicos}. El \emph{scheduler} del sistema operativo introducía \emph{context-switching} constante, contaminando las mediciones.
+El algoritmo usa una descomposición por datos de entrenamiento. Cada proceso recibe un bloque
+del conjunto de entrenamiento y calcula, para cada punto de prueba, los mejores $K$ vecinos dentro
+de su bloque local. Luego, las listas locales Top-$K$ se reducen en forma de árbol binario.
 
-% ── BETA v3 ──────────────────────────────────────────────────
-\begin{betabox}{Beta v3 — Versión instrumentada para benchmarks}
-\textbf{Archivo:} \texttt{src/knn\_mpi\_v3.py} \\[2pt]
-\textbf{Objetivo:} producir mediciones reproducibles y limpias para el análisis del informe.\\[2pt]
-\textbf{Cinco mejoras integradas:}
-\begin{enumerate}
-\item \textbf{Pinning de BLAS a 1 thread por proceso} mediante variables de entorno fijadas \emph{antes} de importar NumPy: \texttt{OMP\_NUM\_THREADS}, \texttt{MKL\_NUM\_THREADS}, \texttt{OPENBLAS\_NUM\_THREADS}, \texttt{VECLIB\_MAXIMUM\_THREADS}, \texttt{BLIS\_NUM\_THREADS}.
-\item \texttt{comm.Barrier()} antes de cada fase para mediciones consistentes.
-\item Repeticiones internas con \emph{warm-up} automático (la primera repetición se descarta).
-\item Recolección de tiempos por rank (\texttt{t\_comp\_max/mean/min/std}) para detectar desbalance.
-\item Salida directa a CSV con todas las métricas, lista para el análisis.
-\end{enumerate}
-\end{betabox}
+La operación de combinación entre dos listas Top-$K$ se define como:
+\[
+\text{MergeTopK}(A,B,K) = \text{mejores } K \text{ candidatos de } A \cup B.
+\]
 
-\textbf{Validación del fix de BLAS:} con threads BLAS limitados a 1 por proceso, el speedup recuperó su comportamiento esperado (Tabla~\ref{tab:v2-vs-v3}).
+Esta operación permite una reducción porque los mejores $K$ vecinos globales deben estar dentro
+de la unión de los mejores $K$ vecinos locales de cada proceso.
 
-\begin{table}[H]
-\centering
-\caption{Comparación del speedup a $p=8$ antes y después del fix de BLAS.}\label{tab:v2-vs-v3}
-\small
-\begin{tabular}{r r r r}
-\toprule
-$n$ & v2 (oversubscription) & v3 (con fix) & Mejora \\
-\midrule
-10\,000 & 4.05$\times$ & \textbf{4.98$\times$} & +23\,\% \\
-40\,000 & 2.25$\times$ & \textbf{6.14$\times$} & +172\,\% \\
-\bottomrule
-\end{tabular}
-\end{table}
+\section{PRAM del algoritmo}
 
-Esta secuencia v1 $\to$ v2 $\to$ v3 documenta una buena práctica de programación paralela: \emph{al combinar MPI con bibliotecas que internamente usan threads (NumPy/BLAS, OpenMP, MKL), el threading interno debe limitarse a 1 para evitar oversubscription}. Es un error frecuente y mencionado explícitamente en la documentación oficial de mpi4py.
+\begin{algorithm}[H]
+\caption{KNN paralelo por proceso con reducción binaria de Top-$K$}
+\KwIn{
+$X_{tr}[1,\dots,n_{tr}][1,\dots,d]$, $Y_{tr}[1,\dots,n_{tr}]$,
+$X_{te}[1,\dots,n_{te}][1,\dots,d]$,
+$p = 2^q$ procesos, proceso $s$ con $1 \leq s \leq p$, número de vecinos $K$
+}
+\KwOut{
+Predicciones $\mathrm{Pred}[1,\dots,n_{te}]$ almacenadas en el proceso $s=1$
+}
 
-% ============================================================
-\section{Mediciones de tiempo, validación teórica y $p$ óptimo}\label{sec:c}
-% ============================================================
+\BlankLine
+$\ell \leftarrow n_{tr}/p$\;
 
-Las mediciones se obtuvieron con \texttt{experiments/run\_v3\_benchmark.sh} recorriendo el producto cartesiano $(n, p)$ con 5 repeticiones por configuración (15 para $n=40\,000$) y filtrado IQR de outliers. Se reportan \textbf{medianas} por su robustez frente a interrupciones del sistema operativo.
+\BlankLine
+\tcp{1. Distribución del conjunto de entrenamiento}
+\If{$s = 1$}{
+    \For{$r \leftarrow 1$ \KwTo $p$}{
+        enviar $X_{tr}[\ell(r-1)+1,\dots,\ell r][1,\dots,d]$ al proceso $r$\;
+        enviar $Y_{tr}[\ell(r-1)+1,\dots,\ell r]$ al proceso $r$\;
+    }
+}
+recibir $\mathrm{LocalX}[1,\dots,\ell][1,\dots,d]$\;
+recibir $\mathrm{LocalY}[1,\dots,\ell]$\;
 
-\subsection*{Tiempos de ejecución, cómputo y comunicación}
+\BlankLine
+\tcp{2. Difusión en árbol del conjunto de prueba}
+\For{$h \leftarrow 1$ \KwTo $\log_2(p)$}{
+    $\mathrm{half} \leftarrow 2^{h-1}$\;
+    \If{$s \leq \mathrm{half}$}{
+        $\mathrm{dest} \leftarrow s + \mathrm{half}$\;
+        \If{$\mathrm{dest} \leq p$}{
+            enviar $X_{te}[1,\dots,n_{te}][1,\dots,d]$ a $\mathrm{dest}$\;
+        }
+    }
+    \ElseIf{$\mathrm{half} < s \leq 2^h$}{
+        $\mathrm{src} \leftarrow s - \mathrm{half}$\;
+        recibir $X_{te}[1,\dots,n_{te}][1,\dots,d]$ desde $\mathrm{src}$\;
+    }
+}
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.75\textwidth]{figures/time_vs_p.png}
-\caption{Tiempo total en escala log-log para $n \in \{1797, 5000, 10000, 40000\}$. Las cuatro curvas muestran pendiente cercana a $-1$ hasta $p=4$ y se aplanan ligeramente a $p=8$. Cuanto mayor es $n$, mejor se mantiene la pendiente cerca de la ideal.}
-\end{figure}
+\BlankLine
+\tcp{3. Cálculo local de Top-$K$}
+\For{$t \leftarrow 1$ \KwTo $n_{te}$}{
+    $\mathrm{TopK}_s[t] \leftarrow \emptyset$\;
+    
+    \For{$i \leftarrow 1$ \KwTo $\ell$}{
+        $\mathrm{dist} \leftarrow \mathrm{distance}(X_{te}[t], \mathrm{LocalX}[i])$\;
+        
+        $\mathrm{idx} \leftarrow \ell(s-1)+i$\;
+        
+        $\mathrm{candidate} \leftarrow (\mathrm{dist}, \mathrm{idx})$\;
+        
+        $\mathrm{TopK}_s[t] \leftarrow 
+        \mathrm{InsertAndKeepBestK}(\mathrm{TopK}_s[t], \mathrm{candidate}, K)$\;
+    }
+}
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.7\textwidth]{figures/time_breakdown.png}
-\caption{Descomposición del tiempo total por fase para $n=40\,000$. El cómputo absorbe prácticamente todo el tiempo (verde); \texttt{bcast}/\texttt{scatter}/\texttt{gather} apenas son visibles. A $p=8$, la comunicación representa solo el 1.21\,\% del cómputo.}
-\end{figure}
+\BlankLine
+\tcp{4. Reducción binaria de Top-$K$}
+\For{$h \leftarrow 1$ \KwTo $\log_2(p)$}{
+    $\mathrm{block\_size} \leftarrow 2^h$\;
+    $\mathrm{half} \leftarrow 2^{h-1}$\;
+    
+    \BlankLine
+    \If{$(s-1) \bmod \mathrm{block\_size} = \mathrm{half}$}{
+        $\mathrm{parent} \leftarrow s - \mathrm{half}$\;
+        
+        enviar $\mathrm{TopK}_s[1,\dots,n_{te}]$ a $\mathrm{parent}$\;
+        
+        \textbf{break}\;
+    }
+    
+    \BlankLine
+    \ElseIf{$(s-1) \bmod \mathrm{block\_size} = 0$}{
+        $\mathrm{child} \leftarrow s + \mathrm{half}$\;
+        
+        \If{$\mathrm{child} \leq p$}{
+            recibir $\mathrm{TopK}_{child}[1,\dots,n_{te}]$ desde $\mathrm{child}$\;
+            
+            \For{$t \leftarrow 1$ \KwTo $n_{te}$}{
+                $\mathrm{TopK}_s[t] \leftarrow 
+                \mathrm{MergeTopK}(\mathrm{TopK}_s[t], \mathrm{TopK}_{child}[t], K)$\;
+            }
+        }
+    }
+}
+\end{algorithm}
 
-\subsection*{Tabla completa de tiempos}
+\begin{algorithm}
+\tcp{5. Votación mayoritaria en el proceso raíz}
+\If{$s = 1$}{
+    \For{$t \leftarrow 1$ \KwTo $n_{te}$}{
+        $\mathrm{Pred}[t] \leftarrow \mathrm{MajorityVote}(\mathrm{TopK}_s[t], Y_{tr})$\;
+    }
+}
+\end{algorithm}
 
-\begin{table}[H]
-\centering
-\caption{Tiempos medianos en milisegundos, speedup, eficiencia y accuracy por configuración $(n,p)$.}
-\small
-\begin{tabular}{r r r r r r r r r}
-\toprule
-$n$ & $p$ & $T$ (ms) & $T_{\text{comp}}$ (ms) & $T_{\text{comm}}$ (ms) & C/Comp & Speedup & Ef. (\%) & Accuracy \\
-\midrule
-1\,797 & 1 & 4.47 & 4.45 & 0.02 & 0.4\,\% & 1.00 & 100.0 & 0.9833 \\
-1\,797 & 2 & 2.60 & 2.53 & 0.07 & 2.8\,\% & 1.72 & 86.1 & 0.9833 \\
-1\,797 & 4 & 1.53 & 1.39 & 0.13 & 9.4\,\% & 2.92 & 73.1 & 0.9833 \\
-1\,797 & 8 & 1.09 & 0.85 & 0.24 & 28.2\,\% & 4.11 & 51.3 & 0.9833 \\
-\addlinespace
-5\,000 & 1 & 37.49 & 37.43 & 0.06 & 0.2\,\% & 1.00 & 100.0 & 0.9950 \\
-5\,000 & 2 & 18.65 & 18.48 & 0.16 & 0.9\,\% & 2.01 & 100.5 & 0.9950 \\
-5\,000 & 4 & 11.11 & 10.75 & 0.34 & 3.2\,\% & 3.37 & 84.4 & 0.9950 \\
-5\,000 & 8 & 7.59 & 7.04 & 0.50 & 7.1\,\% & 4.94 & 61.7 & 0.9950 \\
-\addlinespace
-10\,000 & 1 & 121.00 & 120.85 & 0.10 & 0.1\,\% & 1.00 & 100.0 & 1.0000 \\
-10\,000 & 2 & 61.21 & 60.94 & 0.17 & 0.3\,\% & 1.98 & 98.8 & 1.0000 \\
-10\,000 & 4 & 36.06 & 35.42 & 0.51 & 1.4\,\% & 3.36 & 83.9 & 1.0000 \\
-10\,000 & 8 & 24.30 & 23.31 & 0.79 & 3.4\,\% & 4.98 & 62.2 & 1.0000 \\
-\addlinespace
-40\,000 & 1 & 2362 & 2361 & 0.3 & 0.01\,\% & 1.00 & 100.0 & 1.0000 \\
-40\,000 & 2 & 1134 & 1134 & 1.0 & 0.09\,\% & 2.08 & 104.2 & 1.0000 \\
-40\,000 & 4 & 629 & 626 & 2.5 & 0.40\,\% & 3.76 & 94.0 & 1.0000 \\
-40\,000 & 8 & 385 & 381 & 4.6 & 1.21\,\% & 6.14 & 76.5 & 1.0000 \\
-\bottomrule
-\end{tabular}
-\end{table}
+\subsection{Interpretación de la reducción}
 
-Hay dos observaciones notables. Primero, la \textbf{accuracy aumenta con $n$} (de 0.9833 a 1.0000) porque el dataset escalado contiene réplicas del original con ruido bajo, lo que hace al problema más fácil; lo importante es que sea \textbf{idéntica entre todos los $p$} para el mismo $n$, y eso se cumple. Segundo, a $n=40\,000$, $p=2$ muestra \textbf{eficiencia super-lineal} (104.2\,\%): efecto típico de \emph{cache}, el conjunto particionado entra mejor en L2/L3.
+En la fase de reducción, cada proceso activo representa el acumulador del subárbol izquierdo.
+Por ello, en cada nivel $h$, solo se envía la información del subárbol derecho hacia el proceso
+padre. El proceso padre fusiona su $\mathrm{TopK}_s$ actual con el $\mathrm{TopK}$ recibido y conserva
+los mejores $K$ candidatos para cada punto de prueba.
 
-\subsection*{Validación teórica y normalización}
+La condición de envío es:
+\[
+(s-1) \bmod 2^h = 2^{h-1},
+\]
+mientras que la condición de recepción es:
+\[
+(s-1) \bmod 2^h = 0.
+\]
 
-El modelo teórico que predice el tiempo total combina la región paralelizable, las comunicaciones colectivas y un sobrecosto por proceso:
+Para $p=8$, los envíos son:
+\[
+h=1: \quad 2\to1,\;4\to3,\;6\to5,\;8\to7,
+\]
+\[
+h=2: \quad 3\to1,\;7\to5,
+\]
+\[
+h=3: \quad 5\to1.
+\]
 
-\begin{equation}\label{eq:modelo}
-T(p, n) \;=\; \underbrace{\frac{T_{\text{comp}}(n)}{p}}_{\text{paralelo}} \;+\; \underbrace{\alpha \log_2 p}_{\text{bcast}} \;+\; \underbrace{\gamma\,p}_{\text{coordinación}}
-\end{equation}
+Al finalizar, el proceso $s=1$ contiene el Top-$K$ global para cada punto de prueba.
 
-Para hacer la expresión empíricamente ajustable se \textbf{normaliza fijando $T_{\text{comp}}(n) := T(1, n)$}, que es la medición secuencial real. Esto absorbe los costos absolutos de la máquina (FLOPs/s del CPU) en una sola constante medida y deja solo dos parámetros libres ($\alpha, \gamma$) por estimar de los datos.
+\section{Complejidad de cómputo}
 
-El ajuste por mínimos cuadrados con restricciones físicas ($\alpha, \gamma \geq 0$) sobre $n=40\,000$ produce los valores de la Tabla~\ref{tab:ajuste}.
+\subsection{Cálculo local de distancias}
 
-\begin{table}[H]
-\centering
-\caption{Parámetros ajustados del modelo teórico y modelo Amdahl alternativo.}\label{tab:ajuste}
-\small
-\begin{tabular}{l r l}
-\toprule
-\textbf{Parámetro} & \textbf{Valor estimado} & \textbf{Interpretación} \\
-\midrule
-$\alpha$ (latencia bcast) & $\approx 0$ ms & Despreciable en \emph{shared-memory} \\
-$\gamma$ (sobrecosto/p)   & 9.13 ms/p     & Sincronización + gather \\
-RMSE del ajuste           & 34 ms (3\,\%) & Buen ajuste \\
-\addlinespace
-$f$ (frac. serial Amdahl) & 2.24\,\%      & Algoritmo casi totalmente paralelo \\
-$1/f$ (speedup asintótico)& 44.6$\times$  & Cota teórica máxima \\
-\bottomrule
-\end{tabular}
-\end{table}
+Cada proceso compara sus $\ell = n_{tr}/p$ puntos de entrenamiento contra los $n_{te}$ puntos
+de prueba. Cada distancia euclidiana en dimensión $d$ cuesta:
+\[
+O(d).
+\]
 
-La predicción de Amdahl a $p=8$ es $S = 1/(f + (1-f)/8) = 6.91\times$, vs. $6.14\times$ medido (error $11\,\%$).
+Se asume que la lista Top-$K$ de cada punto de prueba se mantiene con una cola de prioridad
+de tamaño máximo $K$. Por tanto, insertar o actualizar un candidato cuesta:
+\[
+O(\log K).
+\]
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.85\textwidth]{figures/theoretical_fit.png}
-\caption{Comparación de los dos modelos contra los datos para $n=40\,000$. Ambos coinciden hasta $p\approx 10$. El modelo $\alpha\log p + \gamma p$ captura el sobrecosto creciente y predice un mínimo en $p^* \approx 16$, mientras Amdahl ignora ese término y por eso continúa decreciendo monotónicamente.}
-\end{figure}
+Así, el costo local principal por proceso es:
+\[
+T_{\text{local}}
+=
+O\left(
+\frac{n_{tr}}{p} n_{te}(d+\log K)
+\right).
+\]
 
-\subsection*{Cantidad óptima de procesos}
+\subsection{Cómputo durante la reducción}
 
-Derivando la Ecuación~\ref{eq:modelo} respecto a $p$ e igualando a cero:
+En cada nivel de la reducción, un proceso receptor fusiona dos listas Top-$K$ para cada punto
+de prueba. Fusionar dos listas de tamaño $K$ cuesta:
+\[
+O(K).
+\]
 
-\begin{equation}
-\frac{\partial T}{\partial p} = -\frac{T_1}{p^2} + \frac{\alpha}{p\,\ln 2} + \gamma = 0
-\end{equation}
+Como hay $n_{te}$ puntos de prueba, el costo por nivel es:
+\[
+O(n_{te}K).
+\]
 
-Con $T_1 = 2362$ ms, $\alpha \approx 0$ y $\gamma = 9.13$ ms/p, el mínimo numérico se alcanza en:
+La reducción tiene profundidad $\log_2 p$, por lo que:
+\[
+T_{\text{reduce,comp}}
+=
+O(n_{te}K\log p).
+\]
 
-\begin{equation}
-\boxed{p^* \;\approx\; 16}
-\end{equation}
+\subsection{Votación mayoritaria}
 
-con tiempo predicho $T(p^*) \approx 294$ ms y speedup esperado de $8.0\times$. Sin embargo, esta predicción asume cores físicos disponibles. \textbf{El M2 Pro solo tiene 8 P-cores}; más allá de $p=8$ se entra al territorio de los 4 E-cores ($\sim 40\,\%$ más lentos) o se vuelve a la oversubscription, donde la suposición lineal del modelo se rompe.
+En el proceso raíz, la votación mayoritaria se realiza para cada punto de prueba usando sus
+$K$ vecinos globales:
+\[
+T_{\text{vote}}
+=
+O(n_{te}K).
+\]
 
-\textbf{Conclusión.} Dado el hardware del experimento, $p^* \in [8, 12]$ es la recomendación práctica. Los 8 P-cores son suficientes para alcanzar 76\,\% de eficiencia con un overhead manejable.
+\subsection{Tiempo total de cómputo}
 
-% ============================================================
-\section{Speedup y FLOPs vs $p$}\label{sec:d}
-% ============================================================
+Por tanto, el tiempo de cómputo paralelo es:
+\[
+T_{\text{comp}}
+=
+O\left(
+\frac{n_{tr}n_{te}}{p}(d+\log K)
++
+n_{te}K\log p
++
+n_{te}K
+\right).
+\]
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=\textwidth]{figures/speedup_efficiency.png}
-\caption{A la izquierda, speedup vs. $p$ para los cuatro tamaños del problema. La curva ideal $S=p$ aparece en línea discontinua. A la derecha, eficiencia paralela. Las curvas para $n$ grandes (5\,000, 10\,000, 40\,000) son muy similares hasta $p=4$; $n=1797$ cae más rápido por granularidad insuficiente. $n=40\,000$ es la única configuración que sostiene $>90\,\%$ de eficiencia hasta $p=4$.}
-\end{figure}
+Como el término de votación suele estar dominado por el cálculo de distancias, puede
+simplificarse como:
+\[
+\boxed{
+T_{\text{comp}}
+=
+O\left(
+\frac{n_{tr}n_{te}}{p}(d+\log K)
++
+n_{te}K\log p
+\right)
+}.
+\]
 
-\subsection*{Conteo de FLOPs según la fórmula del enunciado}
+\section{Complejidad de comunicación}
 
-La distancia euclidiana entre dos vectores de dimensión $d$ se descompone como:
+El costo de comunicación se modela como:
+\[
+T_{\text{msg}} = \alpha + x\beta,
+\]
+donde $\alpha$ es la latencia, $\beta$ es el costo por byte transmitido y $x$ es el número
+de bytes enviados.
 
-\begin{table}[H]
-\centering
-\small
-\begin{tabular}{l r}
-\toprule
-\textbf{Operación} & \textbf{Cantidad} \\
-\midrule
-Restas $a_i - b_i$ & $d$ \\
-Cuadrados $(a_i-b_i)^2$ & $d$ \\
-Sumas acumulativas & $d - 1$ \\
-Raíz cuadrada & $1$ \\
-\midrule
-\textbf{Total por par} & $\mathbf{3d + 1}$ \\
-\bottomrule
-\end{tabular}
-\end{table}
+\subsection{Distribución del conjunto de entrenamiento}
 
-Para \texttt{load\_digits} con $d=64$: \textbf{193 FLOPs por par de puntos}.
+El proceso raíz distribuye aproximadamente $\ell = n_{tr}/p$ puntos a cada proceso. Cada punto
+tiene $d$ coordenadas y cada coordenada ocupa $B_x = 4$ bytes. La cantidad total de bytes
+enviados es:
+\[
+4n_{tr}d.
+\]
 
-El total de FLOPs en la región paralelizable (entrenamiento) es:
+Además, hay $p$ mensajes. Por tanto:
+\[
+T_{\text{scatter}}
+=
+O(p\alpha + 4\beta n_{tr}d).
+\]
 
-\begin{equation}
-\text{FLOPs}_{\text{total}} = (3d + 1) \cdot n_{tr} \cdot n_{te}
-\end{equation}
+Si se incluyen las etiquetas $Y_{tr}$, debe añadirse:
+\[
+O(4\beta n_{tr}),
+\]
+asumiendo etiquetas enteras de 4 bytes. Como usualmente $d \gg 1$, este término es menor.
 
-Para $n=40\,000$ ($n_{tr}=32\,000$, $n_{te}=8\,000$): $\mathbf{49.4 \times 10^9}$ \textbf{FLOPs}. La métrica reportada como GFLOPs/s es $\text{FLOPs}_{\text{total}} / t_{comp}^{max}$ (rank más lento, cuello de botella).
+\subsection{Difusión en árbol del conjunto de prueba}
 
-\begin{figure}[H]
-\centering
-\includegraphics[width=0.75\textwidth]{figures/flops_vs_p.png}
-\caption{Rendimiento de cómputo en GFLOPs/s. El crecimiento es prácticamente lineal con $p$ para $n$ grandes, lo que confirma la naturaleza embarrassingly parallel del cómputo. $n=10\,000$ alcanza el pico ($\approx 136$ GFLOPs/s a $p=8$) por mejor uso de \emph{cache} que $n=40\,000$.}
-\end{figure}
+El conjunto de prueba contiene $n_{te}d$ valores. Como cada valor ocupa 4 bytes:
+\[
+x = 4n_{te}d.
+\]
 
-\begin{table}[H]
-\centering
-\caption{Rendimiento de cómputo (GFLOPs/s) por configuración.}
-\small
-\begin{tabular}{r r r r r}
-\toprule
-$p$ & $n=1797$ & $n=5000$ & $n=10000$ & $n=40000$ \\
-\midrule
-1 & 22.4 & 20.6 & 25.6 & 20.9 \\
-2 & 39.3 & 41.7 & 50.8 & 43.6 \\
-4 & 70.9 & 71.6 & 87.7 & 78.9 \\
-8 & 117.7 & 111.1 & 135.7 & 130.0 \\
-\bottomrule
-\end{tabular}
-\end{table}
+Usando difusión en árbol, la profundidad es $\log p$, por lo que:
+\[
+T_{\text{bcast}}
+=
+O\left(
+(\alpha + 4\beta n_{te}d)\log p
+\right).
+\]
 
-El crecimiento prácticamente lineal entre $p=1$ y $p=8$ (factor $\approx 6\times$ para $n=40\,000$) refleja directamente el speedup. La leve curvatura corresponde a la pérdida de eficiencia por el sobrecosto creciente identificado en la Sección~\ref{sec:c}.
+\subsection{Reducción binaria de listas Top-$K$}
 
-% ============================================================
-\section{Análisis de escalabilidad}\label{sec:e}
-% ============================================================
+Cada proceso envía, para cada punto de prueba, una lista de $K$ candidatos. Cada candidato
+contiene distancia e índice, por lo que ocupa $B_c = 8$ bytes. El tamaño del mensaje de
+reducción es:
+\[
+x = 8n_{te}K.
+\]
 
-\subsection*{Escalabilidad fuerte (\emph{strong scaling})}
+Como la reducción tiene profundidad $\log p$:
+\[
+T_{\text{reduce,comm}}
+=
+O\left(
+(\alpha + 8\beta n_{te}K)\log p
+\right).
+\]
 
-Variación de $p$ manteniendo $n$ fijo. Las curvas de la figura de speedup muestran:
+\subsection{Tiempo total de comunicación}
 
+Sumando los términos:
+\[
+\boxed{
+T_{\text{comm}}
+=
+O\left(
+p\alpha
++
+4\beta n_{tr}d
++
+(\alpha + 4\beta n_{te}d)\log p
++
+(\alpha + 8\beta n_{te}K)\log p
+\right)
+}.
+\]
+
+\section{Tiempo paralelo total}
+
+El tiempo paralelo total es:
+\[
+T_p = T_{\text{comp}} + T_{\text{comm}}.
+\]
+
+Sustituyendo:
+\[
+\boxed{
+T_p
+=
+O\left(
+\frac{n_{tr}n_{te}}{p}(d+\log K)
++
+n_{te}K\log p
++
+p\alpha
++
+4\beta n_{tr}d
++
+(\alpha + 4\beta n_{te}d)\log p
++
+(\alpha + 8\beta n_{te}K)\log p
+\right)
+}.
+\]
+
+\section{Tiempo secuencial}
+
+En la versión secuencial, se comparan todos los puntos de prueba contra todos los puntos de
+entrenamiento. Con una cola de prioridad de tamaño $K$, se obtiene:
+\[
+\boxed{
+T_1
+=
+O\left(
+n_{tr}n_{te}(d+\log K)
++
+n_{te}K
+\right)
+}.
+\]
+
+Como $n_{tr}d$ suele ser mucho mayor que $K$, normalmente se simplifica como:
+\[
+T_1
+=
+O(n_{tr}n_{te}(d+\log K)).
+\]
+
+\section{Speedup y eficiencia}
+
+\subsection{Speedup teórico}
+
+El speedup se define como:
+\[
+S_p = \frac{T_1}{T_p}.
+\]
+
+Entonces:
+\[
+\boxed{
+S_p
+=
+\frac{
+O(n_{tr}n_{te}(d+\log K))
+}{
+O\left(
+\frac{n_{tr}n_{te}}{p}(d+\log K)
++
+n_{te}K\log p
++
+T_{\text{comm}}
+\right)
+}
+}.
+\]
+
+Si se ignora comunicación y reducción, el speedup ideal sería:
+\[
+S_p^{ideal} = p.
+\]
+
+Sin embargo, en la práctica:
+\[
+S_p < p,
+\]
+debido a comunicación, reducción y desbalance de carga.
+
+\subsection{Eficiencia}
+
+La eficiencia se define como:
+\[
+E_p = \frac{S_p}{p}.
+\]
+
+Sustituyendo:
+\[
+\boxed{
+E_p
+=
+\frac{T_1}{pT_p}
+}.
+\]
+
+La eficiencia mide qué fracción del rendimiento ideal se aprovecha al usar $p$ procesos.
+Cuando $E_p \approx 1$, el paralelismo es casi ideal. Cuando $E_p$ disminuye, significa que
+la comunicación, sincronización o el desbalance de carga están dominando.
+
+\section{FLOPs}
+
+\subsection{FLOPs por distancia euclidiana}
+
+Para dos puntos $x,y \in \mathbb{R}^d$, se calcula la distancia euclidiana al cuadrado:
+\[
+\|x-y\|^2 = \sum_{j=1}^{d}(x_j-y_j)^2.
+\]
+
+Para cada dimensión se realizan aproximadamente:
 \begin{itemize}
-\item \textbf{$n=1797$ (pequeño):} la eficiencia cae al 51\,\% en $p=8$. Razón: el tiempo de cómputo absoluto (4.5 ms) está cerca del piso de coordinación MPI, por lo que dividirlo más no compensa el overhead. \emph{No es paralelizable eficientemente más allá de $p=2$ para este tamaño.}
-\item \textbf{$n=5000$ y $10\,000$ (medianos):} comportamiento prácticamente idéntico, eficiencia $\approx 84\,\%$ a $p=4$ y $\approx 62\,\%$ a $p=8$.
-\item \textbf{$n=40\,000$ (grande):} la única que sostiene $>90\,\%$ a $p=4$ y aún 76\,\% a $p=8$. Es el régimen \emph{saludable}.
+    \item 1 resta: $x_j-y_j$,
+    \item 1 multiplicación: $(x_j-y_j)^2$,
+    \item 1 suma acumulada.
 \end{itemize}
 
-\subsection*{Escalabilidad débil (\emph{weak scaling})}
+Por tanto, se cuentan aproximadamente:
+\[
+3d
+\]
+FLOPs por distancia.
 
-Mantener $n/p$ constante (carga constante por proceso). Aproximación a partir de los datos:
+No se calcula la raíz cuadrada, porque para KNN basta comparar distancias al cuadrado; la raíz
+cuadrada preserva el orden de las distancias y añade costo innecesario.
+
+\subsection{FLOPs totales de la región paralelizable}
+
+La región paralelizable principal calcula:
+\[
+n_{tr}n_{te}
+\]
+distancias. Por tanto:
+\[
+\boxed{
+\mathrm{FLOPs}_{total}
+=
+3n_{tr}n_{te}d
+}.
+\]
+
+Por proceso:
+\[
+\boxed{
+\mathrm{FLOPs}_{proc}
+=
+\frac{3n_{tr}n_{te}d}{p}
+}.
+\]
+
+\subsection{FLOPs por segundo}
+
+Si $T_{\text{comp}}^{exp}$ es el tiempo experimental de cómputo medido, entonces:
+\[
+\boxed{
+\mathrm{FLOPs/s}
+=
+\frac{3n_{tr}n_{te}d}{T_{\text{comp}}^{exp}}
+}.
+\]
+
+Si se desea calcular GFLOPs/s:
+\[
+\boxed{
+\mathrm{GFLOPs/s}
+=
+\frac{3n_{tr}n_{te}d}{10^9T_{\text{comp}}^{exp}}
+}.
+\]
+
+\section{Normalización de la complejidad teórica}
+
+La notación Big-$O$ describe crecimiento asintótico, pero no da tiempos en segundos. Para comparar
+la teoría con los experimentos, se normaliza la expresión teórica usando una constante de
+proporcionalidad.
+
+Se propone ajustar:
+\[
+T_{\text{theory}}(p)
+=
+C_1
+\frac{n_{tr}n_{te}}{p}(d+\log K)
++
+C_2 n_{te}K\log p
++
+C_3 T_{\text{comm}}(p),
+\]
+donde $C_1$, $C_2$ y $C_3$ se estiman a partir de los resultados experimentales.
+
+Una forma simple de normalizar es usar el tiempo experimental para $p=1$:
+\[
+C_1
+=
+\frac{T_{exp}(1)}{n_{tr}n_{te}(d+\log K)}.
+\]
+
+Luego se grafica:
+\[
+T_{\text{theory}}(p)
+\quad \text{vs.} \quad
+T_{\text{exp}}(p).
+\]
+
+\section{Escalabilidad fuerte}
+
+La escalabilidad fuerte evalúa cómo cambia el tiempo al aumentar $p$ manteniendo fijo el tamaño
+del problema:
+\[
+n_{tr}, n_{te}, d, K = \text{constantes}.
+\]
+
+En este caso:
+\[
+T_{\text{comp}} =
+O\left(
+\frac{n_{tr}n_{te}}{p}(d+\log K)
+\right)
+\]
+disminuye al aumentar $p$.
+
+Sin embargo, los términos de comunicación:
+\[
+p\alpha,
+\]
+\[
+(\alpha + 4\beta n_{te}d)\log p,
+\]
+\[
+(\alpha + 8\beta n_{te}K)\log p
+\]
+no disminuyen con $p$. Por tanto, para valores pequeños de $p$, el algoritmo debería mostrar
+mejoras cercanas a lineales. Para valores grandes de $p$, el costo de comunicación y reducción
+empieza a dominar.
+
+El comportamiento esperado es:
+\[
+S_p \approx p
+\quad \text{para } p \text{ pequeño},
+\]
+pero:
+\[
+E_p = \frac{S_p}{p}
+\]
+decrece cuando $p$ crece demasiado.
+
+\subsection{Estimación del número óptimo de procesos}
+
+Una aproximación útil consiste en escribir:
+\[
+T_p \approx \frac{A}{p} + C\log p + Dp,
+\]
+donde:
+\[
+A = n_{tr}n_{te}(d+\log K),
+\]
+\[
+C \approx n_{te}K + \alpha + 4\beta n_{te}d + 8\beta n_{te}K,
+\]
+y $D$ representa el costo asociado a términos lineales como $p\alpha$.
+
+El número óptimo de procesos se estima experimentalmente como:
+\[
+\boxed{
+p^* = \arg\min_p T_p^{exp}
+}.
+\]
+
+También puede definirse como el mayor $p$ antes de que la eficiencia caiga bajo un umbral,
+por ejemplo:
+\[
+E_p < 0.5.
+\]
+
+\section{Escalabilidad débil}
+
+La escalabilidad débil evalúa qué ocurre cuando aumentan simultáneamente el tamaño del problema
+y el número de procesos.
+
+Para este diseño, como se particiona con respecto a $n_{tr}$, una forma natural de escalabilidad
+débil es mantener constante la cantidad de entrenamiento por proceso:
+\[
+\frac{n_{tr}}{p} = \ell = \text{constante}.
+\]
+
+Si además se mantiene fijo $n_{te}$, $d$ y $K$, entonces:
+\[
+T_{\text{comp}}
+=
+O(\ell n_{te}(d+\log K)),
+\]
+que es constante con respecto a $p$.
+
+Pero la comunicación aún crece:
+\[
+T_{\text{bcast}} =
+O((\alpha + 4\beta n_{te}d)\log p),
+\]
+\[
+T_{\text{reduce}} =
+O((\alpha + 8\beta n_{te}K)\log p).
+\]
+
+Por tanto, bajo esta forma de weak scaling:
+\[
+T_p
+=
+O(1 + \log p).
+\]
+
+Esto implica que el algoritmo puede escalar razonablemente, pero no de forma perfecta, debido
+a la comunicación global de $X_{te}$ y la reducción de Top-$K$.
+
+\subsection{Caso donde crecen entrenamiento y prueba}
+
+Si se escala todo el dataset manteniendo fija la proporción entre entrenamiento y prueba:
+\[
+n_{tr} \propto p,
+\quad
+n_{te} \propto p,
+\]
+entonces el trabajo total de KNN crece como:
+\[
+O(n_{tr}n_{te}d) = O(p^2d).
+\]
+
+Al dividir solo $n_{tr}$ entre $p$ procesos:
+\[
+T_{\text{comp}}
+=
+O\left(
+\frac{n_{tr}n_{te}d}{p}
+\right)
+=
+O(pd).
+\]
+
+Por tanto, si tanto $n_{tr}$ como $n_{te}$ crecen proporcionalmente a $p$, el tiempo por proceso
+no se mantiene constante, sino que crece linealmente con $p$. Esto no representa weak scaling
+ideal, pero sí representa el comportamiento esperado cuando se aumenta el tamaño completo del
+dataset.
+
+\section{Métricas experimentales a reportar}
+
+Para cumplir con el análisis experimental, se recomienda medir para cada combinación de
+$n$ y $p$:
+
+\begin{itemize}
+    \item Tiempo total de ejecución:
+    \[
+    T_{\text{total}}
+    \]
+    
+    \item Tiempo de cómputo:
+    \[
+    T_{\text{comp}}^{exp}
+    \]
+    
+    \item Tiempo de comunicación:
+    \[
+    T_{\text{comm}}^{exp}
+    \]
+    
+    \item Accuracy:
+    \[
+    \mathrm{Accuracy} =
+    \frac{\text{predicciones correctas}}{\text{total de predicciones}}
+    \]
+    
+    \item Speedup:
+    \[
+    S_p =
+    \frac{T_1}{T_p}
+    \]
+    
+    \item Eficiencia:
+    \[
+    E_p =
+    \frac{S_p}{p}
+    \]
+    
+    \item GFLOPs/s:
+    \[
+    \mathrm{GFLOPs/s}
+    =
+    \frac{3n_{tr}n_{te}d}{10^9T_{\text{comp}}^{exp}}
+    \]
+\end{itemize}
+
+\section{Relación con MPI}
+
+El PRAM propuesto puede implementarse en Python con \texttt{mpi4py}. Las operaciones principales
+son:
 
 \begin{table}[H]
 \centering
-\small
-\begin{tabular}{r r r r}
+\begin{tabular}{ll}
 \toprule
-$n$ & $p$ & $n/p$ & $T$ (ms) \\
+Fase del PRAM & Directiva MPI sugerida \\
 \midrule
-5\,000 & 1 & 5\,000 & 37.5 \\
-10\,000 & 2 & 5\,000 & 61.2 \\
-40\,000 & 8 & 5\,000 & 385 \\
+Distribución de entrenamiento & \texttt{comm.scatter} o \texttt{comm.scatterv} \\
+Difusión de test & \texttt{comm.bcast} \\
+Cálculo local & Código local NumPy/Python \\
+Reducción Top-$K$ & \texttt{comm.send}/\texttt{comm.recv} en árbol \\
+Alternativa simple & \texttt{comm.gather} y merge en root \\
+Votación final & Proceso root \\
 \bottomrule
 \end{tabular}
+\caption{Correspondencia entre el PRAM y una implementación con MPI.}
 \end{table}
 
-El tiempo \emph{no} se mantiene plano: crece sub-linealmente. Esto se debe a que el cómputo de KNN no escala como $n/p$ sino como $n_{tr}\cdot n_{te}/p$, y al replicar $n_{tr}$ completo en todos los procesos, doblar $n$ duplica el costo por proceso aunque también dupliquemos $p$. Por construcción, KNN tiene escalabilidad débil pobre cuando se mantiene la estructura ``todos contra todos''.
+Aunque la reducción binaria manual es más eficiente que recolectar todos los Top-$K$ en el
+proceso raíz, una primera versión beta puede usar \texttt{comm.gather} para simplificar la
+implementación. Luego, una versión posterior puede reemplazar ese \texttt{gather} por la reducción
+binaria descrita en el PRAM.
 
-\subsection*{Análisis de isoeficiencia}
-
-¿Cuánto debe crecer $n$ para mantener eficiencia constante al aumentar $p$? De la fórmula $E = 1/(1 + T_{\text{comm}} \cdot p / T_{\text{comp}})$:
-
-\begin{table}[H]
-\centering
-\small
-\begin{tabular}{r r r r}
-\toprule
-$p$ & $T_{\text{comm}}/T_{\text{comp}}$ & $E$ predicho & $E$ medido \\
-\midrule
-1 & 0.01\,\% & 1.000 & 1.000 \\
-2 & 0.09\,\% & 0.998 & 1.042 \\
-4 & 0.40\,\% & 0.984 & 0.940 \\
-8 & 1.21\,\% & 0.912 & 0.765 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-La predicción basada solo en \emph{comm/comp} es \textbf{demasiado optimista} a $p=8$ (91\,\% vs. 76\,\% medido). La diferencia ($\sim 15\,\%$) viene de:
+\section{Versiones beta sugeridas}
 
 \begin{itemize}
-\item Imbalance residual entre rank más rápido y más lento (\texttt{t\_comp\_std} no nulo).
-\item \emph{Jitter} del sistema operativo (especialmente entre P-cores y E-cores en el M2 Pro).
-\item \emph{Cache contention} al ejecutar múltiples procesos simultáneamente.
+    \item \textbf{Versión beta 1:} implementación secuencial validada con \texttt{load\_digits}.
+    Se mide accuracy y tiempo base $T_1$.
+    
+    \item \textbf{Versión beta 2:} implementación MPI con \texttt{comm.bcast}, \texttt{comm.scatter}
+    y \texttt{comm.gather}. Cada proceso calcula Top-$K$ local y el root combina todos los
+    resultados.
+    
+    \item \textbf{Versión beta 3:} reemplazo de \texttt{comm.gather} por reducción binaria de
+    Top-$K$, reduciendo el cuello de botella en el proceso raíz.
 \end{itemize}
 
-Para el algoritmo KNN como está formulado (con \texttt{bcast} del entrenamiento completo), la \textbf{isoeficiencia es aproximadamente cuadrática}: para mantener una eficiencia objetivo al duplicar $p$, $n$ debe crecer al menos como $n = \Theta(p \cdot \log p)$ debido al término de bcast, y en la práctica más cerca de $\Theta(p^2)$ una vez se considera que tanto $n_{tr}$ como $n_{te}$ crecen proporcionalmente a $n$.
-
-\subsection*{Discusión de diseño: ¿por qué particionar test y no train?}\label{sec:test-vs-train}
-
-Una pregunta natural es por qué la estrategia particiona el conjunto de testeo (más pequeño) en lugar del entrenamiento (más grande). La intuición ``más datos $=$ más trabajo paralelo'' es razonable, pero ignora un detalle crítico: \textbf{lo que se paraleliza no es el tamaño de los datos sino el número de tareas independientes}.
-
-\subsubsection*{Origen de la independencia en KNN}
-
-La estructura del algoritmo es:
-
-\begin{lstlisting}[language=Python,basicstyle=\ttfamily\small]
-para cada x_test en X_test:          # iteraciones independientes
-    para cada x_train en X_train:    # debe ver TODOS los train
-        d = distancia(x_test, x_train)
-    k_nearest = top_k(distancias)
-    prediccion = majority_vote(etiquetas[k_nearest])
-\end{lstlisting}
-
-Clasificar \texttt{x\_test[0]} es completamente independiente de clasificar \texttt{x\_test[1]}: el bucle exterior es \emph{embarrassingly parallel}. En cambio, el bucle interior es una \textbf{reducción}: para encontrar los $k$ vecinos de un solo punto de test, hay que examinar todos los puntos de train. Por tanto, el número natural de tareas independientes es exactamente $n_{te}$, no $n_{tr}$.
-
-Duplicar $n_{tr}$ no genera tareas adicionales --- solo agranda el trabajo dentro de cada tarea existente.
-
-\subsubsection*{Esquema alternativo: partition-train}
-
-Existe el diseño alternativo, conocido como \emph{kNN distribuido data-parallel}:
-
-\begin{itemize}
-\item $X_{tr}$ se \texttt{Scatter} (cada rank tiene un subset disjunto de tamaño $n_{tr}/p$).
-\item $X_{te}$ se \texttt{Bcast} (todos los ranks tienen el test completo).
-\item Cada rank encuentra los $k$ \textbf{candidatos locales} para cada $x_{te}$ contra su subset de train.
-\item Se hace un \texttt{Allreduce} con operador de \textbf{merge top-$k$} para combinar los $k$ globales por cada punto de test.
-\end{itemize}
-
-La Tabla~\ref{tab:test-vs-train} compara ambos esquemas en términos asintóticos.
-
-\begin{table}[H]
-\centering
-\caption{Comparación de los dos esquemas de paralelización.}\label{tab:test-vs-train}
-\small
-\begin{tabular}{l l l}
-\toprule
-\textbf{Aspecto} & \textbf{Partition-test (este trabajo)} & \textbf{Partition-train (alternativo)} \\
-\midrule
-Memoria por rank & $O(n_{tr}\cdot d)$ train completo & $O(n_{tr}\cdot d / p)$ \\
-Bcast inicial    & $O(\log p \cdot n_{tr} \cdot d \cdot \beta)$ del train & $O(\log p \cdot n_{te} \cdot d \cdot \beta)$ del test \\
-Cómputo local    & $O(n_{tr}\cdot n_{te} / p)$ & $O(n_{tr}\cdot n_{te} / p)$ \\
-Reducción final  & Gather etiquetas: $O(p \cdot k \cdot \beta)$ & \textbf{Allreduce top-$k$:} $O(p \cdot n_{te} \cdot k \cdot \beta)$ \\
-Complejidad de código & Simple: \texttt{majority\_vote} local & Compleja: merge de listas-$k$ \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Hay tres observaciones clave de esta comparación:
-
-\begin{enumerate}
-\item \textbf{El cómputo es idéntico} en ambos esquemas. Esto es esperable: el costo es $n_{tr}\cdot n_{te}$ pares distancia $\div\,p$ procesadores, sin importar cómo se distribuyan los datos.
-\item \textbf{Partition-train es más eficiente en memoria} (factor $p$). Solo importa cuando $X_{tr}$ no entra en RAM por nodo --- no es nuestro caso ($16$ MB cabe trivialmente en cualquier laptop moderna).
-\item \textbf{Partition-train paga su ahorro de memoria en comunicación}: la reducción final transfiere $n_{te} \cdot k$ candidatos por rank, en vez de $n_{te}/p$ etiquetas finales. Para nuestros tamaños esto es $\sim n_{te} \cdot k$ vs. $\sim n_{te}/p$, un factor $p \cdot k$ peor.
-\end{enumerate}
-
-\subsubsection*{¿Cuándo conviene cada esquema?}
-
-\begin{table}[H]
-\centering
-\small
-\begin{tabular}{p{0.45\textwidth} p{0.45\textwidth}}
-\toprule
-\textbf{Partition-test (nuestro caso)} & \textbf{Partition-train} \\
-\midrule
-$X_{tr}$ cabe en RAM de cada nodo & $X_{tr}$ es enorme (no cabe) \\
-Una máquina multicore o cluster pequeño & Cluster grande ($p \gg 10$) \\
-Red rápida (shared-memory, InfiniBand) & Red lenta entre nodos \\
-Implementación simple deseable & Se justifica complejidad extra \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsubsection*{Validación de la elección con datos del experimento}
-
-La Tabla del análisis de tiempos muestra que a $n=40\,000$, $p=8$:
-
-\begin{itemize}
-\item Comunicación total: $4.6$ ms ($1.21\,\%$ del tiempo)
-\item Bcast de train ($16$ MB): apenas un componente de esos $4.6$ ms
-\end{itemize}
-
-Es decir, replicar el train por Bcast \textbf{prácticamente no cuesta nada} en nuestro escenario. Cambiar a partition-train para ahorrar ese $1\,\%$ no compensaría la complejidad adicional del Allreduce top-$k$ ni el costo extra de comunicar $n_{te}\cdot k$ candidatos parciales. La elección de particionar test es la decisión correcta para el problema y hardware planteados.
-
-\subsection*{Veredicto de escalabilidad}
-
-KNN así implementado es:
-
-\begin{itemize}
-\item \textbf{Excelente para \emph{strong scaling}} cuando $n$ es grande ($\geq 10\,000$) y $p \leq$ número de cores físicos.
-\item \textbf{Moderado para \emph{weak scaling}}: la replicación del entrenamiento limita la escalabilidad débil a problemas pequeños o medianos.
-\item \textbf{Para escalar a clusters distribuidos} ($p \gg 10$), la mejor mejora algorítmica sería pasar a un esquema de \emph{partición del entrenamiento} (cada rank tiene un subset disjunto de $X_{tr}$) con \texttt{Allreduce} para combinar los $k$ mejores candidatos locales --- esto convierte el bcast en una operación distribuida y mejora la isoeficiencia.
-\end{itemize}
-
-% ============================================================
 \section{Conclusiones}
-% ============================================================
 
-\begin{enumerate}
-\item \textbf{Implementación validada.} La accuracy es idéntica al secuencial en las tres versiones beta para todas las configuraciones probadas.
-\item \textbf{Desempeño.} Speedup de \textbf{6.14$\times$} con eficiencia de 76\,\% a $p=8$, $n=40\,000$, alcanzando \textbf{130 GFLOPs/s} sostenidos.
-\item \textbf{Lección de ingeniería paralela.} Documentamos un caso real de \emph{oversubscription} de threads BLAS y su solución estándar (variables de entorno de \emph{pinning}), que resultó esencial para obtener mediciones reproducibles.
-\item \textbf{Cantidad óptima de procesos.} $p^* \approx 16$ según el modelo teórico, pero limitado en la práctica a $p \approx 8$--$12$ por el hardware del experimento (8 P-cores).
-\item \textbf{Escalabilidad.} El algoritmo es ideal para \emph{strong scaling} sobre datasets medianos-grandes en una sola máquina multicore. Para escalar a \emph{clusters} distribuidos requiere una variante con partición del entrenamiento.
-\end{enumerate}
+El diseño paralelo propuesto aprovecha que el cálculo de distancias en KNN es altamente
+paralelizable. Al distribuir el conjunto de entrenamiento, el costo dominante se reduce de:
+\[
+O(n_{tr}n_{te}(d+\log K))
+\]
+a:
+\[
+O\left(
+\frac{n_{tr}n_{te}}{p}(d+\log K)
+\right),
+\]
+más costos adicionales de comunicación y reducción.
 
-% ============================================================
-\section*{Bibliografía}
-\addcontentsline{toc}{section}{Bibliografía}
-% ============================================================
+La reducción binaria de Top-$K$ evita enviar todos los resultados completos al proceso raíz
+mediante una comunicación plana, reduciendo la profundidad de combinación a:
+\[
+O(\log p).
+\]
 
-\begin{enumerate}
-\item Código secuencial base: \texttt{knn\_digits\_sec.py} (provisto por el curso).
-\item Documentación oficial de mpi4py: \url{https://mpi4py.readthedocs.io/en/stable/}
-\item Open MPI documentation: \url{https://www.open-mpi.org/doc/}
-\item Repositorio del proyecto: \texttt{knn-mpi-parallel/} (incluye código, scripts de benchmark, notebook de análisis y CSV de resultados crudos).
-\end{enumerate}
+Se espera buen speedup para valores moderados de $p$, especialmente cuando:
+\[
+n_{tr}n_{te}d
+\]
+es suficientemente grande para amortiguar los costos de comunicación. Sin embargo, para valores
+altos de $p$, la eficiencia disminuye debido a la difusión del conjunto de prueba, la distribución
+del entrenamiento y la reducción global de candidatos.
+
+\begin{thebibliography}{9}
+
+\bibitem{mpi4py}
+MPI for Python documentation.
+\textit{mpi4py}. Disponible en la documentación oficial de mpi4py.
+
+\bibitem{sklearn}
+Scikit-learn documentation.
+\textit{The digits dataset}. Disponible en la documentación oficial de scikit-learn.
+
+\bibitem{course}
+José Fiestas.
+\textit{Computación Paralela y Distribuida: Proyecto de Laboratorio 2026-I}.
+Universidad de Ingeniería y Tecnología, 2026.
+
+\end{thebibliography}
 
 \end{document}
