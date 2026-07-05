@@ -29,8 +29,9 @@ se apoya íntegramente en colectivas MPI:
       Aquí está el núcleo de esta versión. MPI trae reducciones predefinidas
       (MPI.SUM, MPI.MAX, ...), pero no una para "quedarse con los K mejores". Se
       define entonces una operación propia con MPI.Op.Create cuya regla de
-      combinación es MergeTopK(A, B, K) = los K mejores candidatos de A ∪ B, y se
-      la pasa a comm.Reduce. MPI la aplica en su árbol de reducción de coste
+      combinación es MergeTopK(A, B, K) = los K mejores candidatos de A ∪ B por
+      orden lexicográfico (distancia, índice global), y se la pasa a comm.Reduce.
+      MPI la aplica en su árbol de reducción de coste
       log(p), igual que haría con una suma. La operación es válida como reducción
       porque MergeTopK es asociativa y conmutativa, y porque los K vecinos
       globales más cercanos están necesariamente en la unión de los K mejores
@@ -42,9 +43,10 @@ Empaquetado para la operación personalizada
 Una operación de reducción de MPI opera sobre un único buffer de un tipo de dato.
 Como cada candidato es un par (distancia, índice) que debe viajar junto, se
 empaquetan ambos en un buffer float64 de forma (n_test, K, 2): el plano [...,0]
-guarda las distancias y el plano [...,1] los índices (un índice entero cabe sin
-pérdida en un float64). La función de combinación reinterpreta el buffer, mezcla
-los 2K candidatos de cada punto de prueba y deja los K mejores en sitio.
+guarda las distancias y el plano [...,1] los índices. Los índices se representan
+exactamente mientras n_train < 2**53, condición verificada en rank 0. La función
+de combinación reinterpreta el buffer, mezcla los 2K candidatos de cada punto de
+prueba y deja los K mejores en sitio.
 
 Manejo de casos no divisibles
 -----------------------------
@@ -108,8 +110,9 @@ def make_merge_topk_op(k):
     candidatos de cada punto de prueba y escribe los K mejores EN SITIO sobre
     inoutvec (convención de MPI: inoutvec <- op(invec, inoutvec)).
 
-    `commute=True`: MergeTopK es conmutativa (la unión no depende del orden), lo
-    que le da libertad a MPI para ordenar el árbol de reducción.
+    `commute=True`: MergeTopK ordena por (distancia, índice global), así que es
+    determinista, asociativa y conmutativa; MPI puede ordenar libremente el árbol
+    de reducción sin cambiar el Top-K resultante.
     """
     def _merge(invec, inoutvec, datatype):
         # frombuffer reinterpreta la memoria del buffer sin copiar; inoutvec es
@@ -146,13 +149,13 @@ def knn_predict_mpi(comm, X_train_full, y_train_full, X_test_full,
     LocalX = np.empty((local_n, n_features), dtype=np.float64)
     LocalY = np.empty(local_n, dtype=np.int64)
     sendX = np.ascontiguousarray(X_train_full) if rank == 0 else None
-    sendY = np.ascontiguousarray(y_train_full) if rank == 0 else None
+    sendY = np.ascontiguousarray(y_train_full, dtype=np.int64) if rank == 0 else None
     comm.Scatterv(
         [sendX, counts * n_features, displs * n_features, MPI.DOUBLE],
         LocalX, root=0
     )
     comm.Scatterv(
-        [sendY, counts, displs, MPI.LONG],
+        [sendY, counts, displs, MPI.INT64_T],
         LocalY, root=0
     )
 
@@ -214,6 +217,11 @@ def main():
               f"p={size} k={args.k}")
         if args.k > n_train:
             raise SystemExit(f"k={args.k} > n_train={n_train}: imposible")
+        if n_train >= 2**53:
+            raise SystemExit(
+                f"n_train={n_train} >= 2**53: los índices no caben exactamente "
+                "en el empaquetado float64 de la reducción"
+            )
     else:
         X_train = y_train = X_test = y_test = None
         n_train = n_features = n_test = None

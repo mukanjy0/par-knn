@@ -9,9 +9,9 @@ El primer archivo es la REFERENCIA (típicamente la versión secuencial). Cada
 uno de los demás se compara contra ella elemento a elemento. Sale con código 0
 si todos coinciden al 100%, y 1 si alguno difiere (imprime cuántos y dónde).
 
-Nota: en KNN puede haber diferencias mínimas y legítimas por empates exactos de
-distancia en la frontera del Top-K (el desempate de argpartition/argsort es
-arbitrario). El script reporta la tasa de coincidencia para que se pueda juzgar.
+La versión MPI v5 desempata el Top-K por (distancia, índice global), por lo que
+las predicciones MPI deben coincidir exactamente para el mismo n, k y dataset,
+independientemente del número de procesos.
 """
 import sys
 from pathlib import Path

@@ -5,11 +5,11 @@
 #
 # Estrategia:
 #   1. Corre la secuencial -> seq.npy  (referencia "verdad")
-#   2. Corre la MPI con varios p (1, 2, 4) -> mpi_pP.npy
+#   2. Corre la MPI con varios p (1, 2, 4, 8) -> mpi_pP.npy
 #   3. Compara todos contra la referencia con compare_preds.py
 #
 # Uso:   bash scripts/verify_correctness.sh
-#        N=300 K=3 PROCS="1 2 4" PYTHON=python bash scripts/verify_correctness.sh
+#        N=10000 K=3 PROCS="1 2 4 8" PYTHON=python bash scripts/verify_correctness.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -18,7 +18,7 @@ PYTHON="${PYTHON:-python}"
 MPI_LAUNCHER="${MPI_LAUNCHER:-mpirun}"
 N="${N:-300}"
 K="${K:-3}"
-PROCS="${PROCS:-1 2 4}"
+PROCS="${PROCS:-1 2 4 8}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 OUT_DIR="${OUT_DIR:-results/verify_${STAMP}}"
 
