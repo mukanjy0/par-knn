@@ -24,8 +24,10 @@ build/
 
 # Results/data large files
 results/
+khipu_v4_results/
 logs/
 khipu_logs/
+khipu_v4_logs/
 *.swp
 *.swo
 *.csv
