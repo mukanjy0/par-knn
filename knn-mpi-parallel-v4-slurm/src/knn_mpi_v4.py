@@ -38,6 +38,48 @@ from utils.data_loader import load_scaled_digits
 from utils.knn_kernel import local_topk_batch, majority_vote, merge_topk
 
 
+def add_dataset_args(parser):
+    parser.add_argument("--n", type=int, default=None, help="Alias for --n-total")
+    parser.add_argument("--n-total", type=int, default=None,
+                        help="Final total dataset size; uses percentage split")
+    parser.add_argument("--n-train", type=int, default=None,
+                        help="Exact final train split size")
+    parser.add_argument("--n-test", type=int, default=None,
+                        help="Exact final test split size")
+    parser.add_argument("--test-size", type=float, default=0.2,
+                        help="Final test fraction for --n-total mode")
+    parser.add_argument("--orig-test-size", type=float, default=0.2,
+                        help="Original holdout fraction before augmentation in fixed-size mode")
+    parser.add_argument("--split-seed", type=int, default=42,
+                        help="Seed for stratified original split")
+    parser.add_argument("--augment-seed", type=int, default=123,
+                        help="Seed for deterministic augmentation")
+
+
+def dataset_kwargs_from_args(parser, args):
+    if args.n is not None and args.n_total is not None:
+        parser.error("--n and --n-total are aliases; use only one")
+    return {
+        "n_total": args.n_total if args.n_total is not None else args.n,
+        "n_train": args.n_train,
+        "n_test": args.n_test,
+        "test_size": args.test_size,
+        "orig_test_size": args.orig_test_size,
+        "split_seed": args.split_seed,
+        "augment_seed": args.augment_seed,
+    }
+
+
+def reported_n(args, n_train, n_test):
+    if args.n_train is not None and args.n_test is not None:
+        return args.n_train + args.n_test
+    if args.n_total is not None:
+        return args.n_total
+    if args.n is not None:
+        return args.n
+    return n_train + n_test
+
+
 TAG_TRAIN_X = 10
 TAG_TRAIN_Y = 11
 TAG_TEST = 20
@@ -174,8 +216,23 @@ def reduce_topk_tree(comm, topk_dist, topk_idx, n_test, k):
     return topk_dist, topk_idx
 
 
+def local_topk_test_batched(x_test, local_x, k, batch_size):
+    if batch_size <= 0 or batch_size >= x_test.shape[0]:
+        return local_topk_batch(x_test, local_x, k)
+
+    n_test = x_test.shape[0]
+    topk_dist = np.empty((n_test, k), dtype=np.float64)
+    topk_idx = np.empty((n_test, k), dtype=np.int64)
+    for start in range(0, n_test, batch_size):
+        stop = min(start + batch_size, n_test)
+        batch_dist, batch_idx = local_topk_batch(x_test[start:stop], local_x, k)
+        topk_dist[start:stop] = batch_dist
+        topk_idx[start:stop] = batch_idx
+    return topk_dist, topk_idx
+
+
 def run_one_rep(comm, X_train, y_train, X_test, y_test,
-                n_train, n_features, n_test, k):
+                n_train, n_features, n_test, k, test_batch_size):
     rank = comm.Get_rank()
 
     comm.Barrier()
@@ -197,7 +254,9 @@ def run_one_rep(comm, X_train, y_train, X_test, y_test,
 
     comm.Barrier()
     t0 = MPI.Wtime()
-    topk_dist, topk_idx_local = local_topk_batch(x_test, local_x, k)
+    topk_dist, topk_idx_local = local_topk_test_batched(
+        x_test, local_x, k, test_batch_size
+    )
     topk_idx = np.where(topk_idx_local >= 0, topk_idx_local + offset, topk_idx_local)
     comm.Barrier()
     t_comp_local = MPI.Wtime() - t0
@@ -240,21 +299,24 @@ def main():
     parser = argparse.ArgumentParser(
         description="KNN-MPI v4: training decomposition + explicit Top-K tree reduction"
     )
-    parser.add_argument("--n", type=int, default=None, help="Total dataset size")
+    add_dataset_args(parser)
     parser.add_argument("--k", type=int, default=3, help="Number of neighbors")
     parser.add_argument("--reps", type=int, default=5, help="Measured repetitions")
     parser.add_argument("--no-warmup", action="store_true", help="Do not discard a warm-up repetition")
     parser.add_argument("--csv", type=str, default=None, help="Append raw benchmark rows to CSV")
     parser.add_argument("--json", type=str, default=None, help="Write final measured row to JSON")
     parser.add_argument("--pred-out", type=str, default=None, help="Write final predictions to a .npy file")
+    parser.add_argument("--test-batch-size", type=int, default=0,
+                        help="Number of test rows per local Top-K batch; 0 means all at once")
     args = parser.parse_args()
+    dataset_kwargs = dataset_kwargs_from_args(parser, args)
 
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
     size = comm.Get_size()
 
     if rank == 0:
-        X_train, X_test, y_train, y_test = load_scaled_digits(args.n)
+        X_train, X_test, y_train, y_test = load_scaled_digits(**dataset_kwargs)
         n_train, n_features = X_train.shape
         n_test = X_test.shape[0]
         if args.k > n_train:
@@ -269,7 +331,8 @@ def main():
         print(
             f"[rank 0] n_train={n_train} n_test={n_test} d={n_features} "
             f"p={size} k={args.k} reps={args.reps} "
-            f"warmup={'no' if args.no_warmup else 'yes'}"
+            f"warmup={'no' if args.no_warmup else 'yes'} "
+            f"test_batch_size={args.test_batch_size}"
         )
     else:
         X_train = y_train = X_test = y_test = None
@@ -287,7 +350,7 @@ def main():
     for rep_idx in range(total_reps):
         y_pred, result = run_one_rep(
             comm, X_train, y_train, X_test, y_test,
-            n_train, n_features, n_test, args.k
+            n_train, n_features, n_test, args.k, args.test_batch_size
         )
         is_warmup = (not args.no_warmup) and rep_idx == 0
         measured_idx = rep_idx if args.no_warmup else rep_idx - 1
@@ -306,7 +369,7 @@ def main():
                 flops = (3 * n_features + 1) * n_train * n_test
                 rows_for_csv.append({
                     **metadata,
-                    "n": args.n if args.n else n_train + n_test,
+                    "n": reported_n(args, n_train, n_test),
                     "p": size,
                     "k": args.k,
                     "rep": measured_idx,

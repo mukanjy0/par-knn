@@ -149,46 +149,127 @@ Python packages inside the Slurm job.
 
 If MPI launching is allowed only inside Slurm, skip direct `mpirun` on the access node.
 
-## 5. Submit a short debug job
+## 5. Submit the strong-scaling benchmark
 
-Create the log directory before `sbatch` because Slurm opens log files before the script body runs.
-Khipu uses the `debug` partition for short CPU tests.
-
-```bash
-mkdir -p logs
-sbatch --partition=debug --time=00:05:00 \
-  --export=ALL,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2",SAMPLES="120",REPS=1 \
-  slurm/knn_benchmark.sbatch
-```
-
-This Khipu Open MPI environment should use `mpirun` inside the Slurm allocation. Direct `srun` can fail with a PMI/PMIx support error.
-
-## 6. Submit the main benchmark
+This benchmark uses fixed-size train/test loading, where the original digits
+dataset is split first and augmentation happens separately inside each split.
+For strong scaling, the MPI `p=1` run is the baseline. The aggregation script
+uses the median of the three runs for `t_total`, speedup, efficiency, and plots.
 
 Your Khipu account limit is `cpu=32` and `TimeLimit=08:00:00`, so the benchmark matrix uses exactly:
 
 ```text
+k = 3
+n_test = 5000
 p = 1, 2, 4, 8, 16, 32
+n_train = 10000, 25000, 50000, 100000
+runs = 3 or 5
+metric = median
 ```
 
-Start with a one-hour run:
+Create the log directory before `sbatch` because Slurm opens log files before
+the script body runs. Khipu uses the `debug` partition for short CPU tests.
+This Khipu Open MPI environment should use `mpirun` inside the Slurm allocation.
+Direct `srun` can fail with a PMI/PMIx support error.
+
+Debug command:
 
 ```bash
 mkdir -p logs
-sbatch --partition=standard --time=01:00:00 \
-  --export=ALL,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2 4 8 16 32",SAMPLES="1797 5000 10000",REPS=3 \
+sbatch --partition=debug --time=00:05:00 \
+  --export=ALL,BENCHMARK_MODE=strong,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2",N_TRAINS="25000",N_TEST=500,K=3,REPS=1,TEST_BATCH_SIZE=250 \
   slurm/knn_benchmark.sbatch
 ```
 
-If the first run is too short for the selected `n` values, increase the wall time up to your account limit:
+Actual command:
 
 ```bash
+mkdir -p logs
 sbatch --partition=standard --time=08:00:00 \
-  --export=ALL,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2 4 8 16 32",SAMPLES="1797 5000 10000",REPS=3 \
+  --export=ALL,BENCHMARK_MODE=strong,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2 4 8 16 32",N_TRAINS="10000 25000 50000 100000",N_TEST=5000,K=3,REPS=3,TEST_BATCH_SIZE=250 \
   slurm/knn_benchmark.sbatch
 ```
 
-## 7. Monitor, inspect, and cancel if needed
+Use `REPS=5` in the same command if you want a more stable median for the
+strong-scaling plots and the wall time still fits the allocation.
+
+`TEST_BATCH_SIZE=250` only batches the local distance computation over test
+rows to reduce memory pressure for the largest `p=1` case. It does not change
+the train decomposition, broadcast, reduction tree, or reported metric.
+
+## 6. Submit the weak-scaling benchmark
+
+Weak scaling keeps the training work per MPI rank fixed:
+
+```text
+k = 3
+n_test = 5000
+train_per_process = 3125
+p = 1, 2, 4, 8, 16, 32
+runs = 3
+metric = median
+```
+
+That means the job runs `n_train = train_per_process * p`, so the training set
+grows from `3125` at `p=1` to `100000` at `p=32`.
+Use `summary.csv` for the median weak-scaling timings. The existing
+`speedup`/`efficiency` columns are strong-scaling metrics based on same-problem
+MPI `p=1` baselines, so they are not the main weak-scaling interpretation.
+
+Debug command:
+
+```bash
+mkdir -p logs
+sbatch --partition=debug --time=00:05:00 \
+  --export=ALL,BENCHMARK_MODE=weak,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2",TRAIN_PER_PROCESS=250,N_TEST=50,K=3,REPS=1,TEST_BATCH_SIZE=25 \
+  slurm/knn_benchmark.sbatch
+```
+
+Actual command:
+
+```bash
+mkdir -p logs
+sbatch --partition=standard --time=08:00:00 \
+  --export=ALL,BENCHMARK_MODE=weak,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2 4 8 16 32",TRAIN_PER_PROCESS=3125,N_TEST=5000,K=3,REPS=3,TEST_BATCH_SIZE=250 \
+  slurm/knn_benchmark.sbatch
+```
+
+## 7. Submit the accuracy/correctness benchmark
+
+Accuracy/correctness uses percentage mode and fixed seeds so every process
+count sees the same generated dataset for each `n_total`.
+
+```text
+test_size = 0.2
+k = 3
+n_total = 10000, 50000, 100000
+p = 1, 8, 32
+runs = 1
+same seed
+```
+
+The job writes prediction vectors under the output directory and compares the
+outputs for `p=1`, `p=8`, and `p=32` for each `n_total`.
+
+Debug command:
+
+```bash
+mkdir -p logs
+sbatch --partition=debug --time=00:05:00 \
+  --export=ALL,BENCHMARK_MODE=accuracy,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 2",N_TOTALS="300",TEST_SIZE=0.2,K=3,REPS=1,TEST_BATCH_SIZE=25,SPLIT_SEED=42,AUGMENT_SEED=123 \
+  slurm/knn_benchmark.sbatch
+```
+
+Actual command:
+
+```bash
+mkdir -p logs
+sbatch --partition=standard --time=02:00:00 \
+  --export=ALL,BENCHMARK_MODE=accuracy,KHIPU_MODULES="python3/3.10.2",MPI_LAUNCHER=mpirun,PROCS="1 8 32",N_TOTALS="10000 50000 100000",TEST_SIZE=0.2,K=3,REPS=1,TEST_BATCH_SIZE=250,SPLIT_SEED=42,AUGMENT_SEED=123 \
+  slurm/knn_benchmark.sbatch
+```
+
+## 8. Monitor, inspect, and cancel if needed
 
 ```bash
 squeue -u "$USER"
@@ -199,7 +280,7 @@ scancel JOBID
 
 Replace `JOBID` with the numeric job id.
 
-## 8. Retrieve results locally
+## 9. Retrieve results locally
 
 From your local machine:
 

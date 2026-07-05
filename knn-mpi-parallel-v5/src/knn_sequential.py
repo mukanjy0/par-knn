@@ -17,6 +17,39 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.data_loader import load_scaled_digits
 
 
+def add_dataset_args(parser):
+    parser.add_argument("--n", type=int, default=None,
+                        help="Alias historico de --n-total")
+    parser.add_argument("--n-total", type=int, default=None,
+                        help="Tamano total final; usa split porcentual")
+    parser.add_argument("--n-train", type=int, default=None,
+                        help="Tamano final exacto del train split")
+    parser.add_argument("--n-test", type=int, default=None,
+                        help="Tamano final exacto del test split")
+    parser.add_argument("--test-size", type=float, default=0.2,
+                        help="Proporcion final de test en modo --n-total")
+    parser.add_argument("--orig-test-size", type=float, default=0.2,
+                        help="Holdout original usado antes de aumentar en modo fijo")
+    parser.add_argument("--split-seed", type=int, default=42,
+                        help="Semilla del split original estratificado")
+    parser.add_argument("--augment-seed", type=int, default=123,
+                        help="Semilla del aumento deterministico")
+
+
+def dataset_kwargs_from_args(parser, args):
+    if args.n is not None and args.n_total is not None:
+        parser.error("--n y --n-total son alias; use solo uno")
+    return {
+        "n_total": args.n_total if args.n_total is not None else args.n,
+        "n_train": args.n_train,
+        "n_test": args.n_test,
+        "test_size": args.test_size,
+        "orig_test_size": args.orig_test_size,
+        "split_seed": args.split_seed,
+        "augment_seed": args.augment_seed,
+    }
+
+
 def euclidean_distance(a, b):
     return np.sqrt(np.sum((a - b) ** 2))
 
@@ -31,13 +64,14 @@ def knn_predict(test_point, X_train, y_train, k):
 
 def main():
     parser = argparse.ArgumentParser(description="KNN secuencial (baseline)")
-    parser.add_argument("--n", type=int, default=None, help="Tamaño total del dataset")
+    add_dataset_args(parser)
     parser.add_argument("--k", type=int, default=3, help="Número de vecinos")
     parser.add_argument("--pred-out", type=str, default=None,
                         help="Ruta .npy para volcar las predicciones (para verificación).")
     args = parser.parse_args()
+    dataset_kwargs = dataset_kwargs_from_args(parser, args)
 
-    X_train, X_test, y_train, y_test = load_scaled_digits(args.n)
+    X_train, X_test, y_train, y_test = load_scaled_digits(**dataset_kwargs)
     n_train, n_features = X_train.shape
     n_test = X_test.shape[0]
     print(f"[sequential] n_train={n_train} n_test={n_test} d={n_features} k={args.k}")

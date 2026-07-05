@@ -23,6 +23,48 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from utils.data_loader import load_scaled_digits
 
 
+def add_dataset_args(parser):
+    parser.add_argument("--n", type=int, default=None, help="Alias for --n-total")
+    parser.add_argument("--n-total", type=int, default=None,
+                        help="Final total dataset size; uses percentage split")
+    parser.add_argument("--n-train", type=int, default=None,
+                        help="Exact final train split size")
+    parser.add_argument("--n-test", type=int, default=None,
+                        help="Exact final test split size")
+    parser.add_argument("--test-size", type=float, default=0.2,
+                        help="Final test fraction for --n-total mode")
+    parser.add_argument("--orig-test-size", type=float, default=0.2,
+                        help="Original holdout fraction before augmentation in fixed-size mode")
+    parser.add_argument("--split-seed", type=int, default=42,
+                        help="Seed for stratified original split")
+    parser.add_argument("--augment-seed", type=int, default=123,
+                        help="Seed for deterministic augmentation")
+
+
+def dataset_kwargs_from_args(parser, args):
+    if args.n is not None and args.n_total is not None:
+        parser.error("--n and --n-total are aliases; use only one")
+    return {
+        "n_total": args.n_total if args.n_total is not None else args.n,
+        "n_train": args.n_train,
+        "n_test": args.n_test,
+        "test_size": args.test_size,
+        "orig_test_size": args.orig_test_size,
+        "split_seed": args.split_seed,
+        "augment_seed": args.augment_seed,
+    }
+
+
+def reported_n(args, n_train, n_test):
+    if args.n_train is not None and args.n_test is not None:
+        return args.n_train + args.n_test
+    if args.n_total is not None:
+        return args.n_total
+    if args.n is not None:
+        return args.n
+    return n_train + n_test
+
+
 CSV_FIELDS = [
     "timestamp", "hostname", "git_commit", "command",
     "mode", "n", "p", "k", "rep",
@@ -120,7 +162,7 @@ def maybe_plot(X_test, y_test, y_pred, output_path=None):
 
 def main():
     parser = argparse.ArgumentParser(description="Sequential KNN baseline")
-    parser.add_argument("--n", type=int, default=None, help="Total dataset size")
+    add_dataset_args(parser)
     parser.add_argument("--k", type=int, default=3, help="Number of neighbors")
     parser.add_argument("--reps", type=int, default=1, help="Measured repetitions")
     parser.add_argument("--csv", type=str, default=None, help="Append raw rows to CSV")
@@ -129,11 +171,12 @@ def main():
     parser.add_argument("--plot", action="store_true", help="Show or save prediction plot")
     parser.add_argument("--plot-out", type=str, default=None, help="Optional PNG path for --plot")
     args = parser.parse_args()
+    dataset_kwargs = dataset_kwargs_from_args(parser, args)
 
-    X_train, X_test, y_train, y_test = load_scaled_digits(args.n)
+    X_train, X_test, y_train, y_test = load_scaled_digits(**dataset_kwargs)
     n_train, n_features = X_train.shape
     n_test = X_test.shape[0]
-    n_total = args.n if args.n is not None else n_train + n_test
+    n_total = reported_n(args, n_train, n_test)
     flops = (3 * n_features + 1) * n_train * n_test
     metadata = {
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
