@@ -1,5 +1,10 @@
 #!/usr/bin/env python
-"""Aggregate raw KNN CSV rows and compute speedup/efficiency from p=1."""
+"""Aggregate raw KNN CSV rows and compute speedup/efficiency.
+
+MPI rows use MPI p=1 as the baseline when available. That reports parallel
+speedup for the same implementation instead of mixing in scalar-vs-vectorized
+algorithmic speedup from the sequential baseline.
+"""
 from __future__ import annotations
 
 import argparse
@@ -85,22 +90,26 @@ def main() -> None:
         })
         summaries.append(summary)
 
-    baselines: dict[tuple[int, int], float] = {}
+    sequential_baselines: dict[tuple[int, int], float] = {}
+    mpi_baselines: dict[tuple[int, int], float] = {}
     for row in summaries:
         n = int(float(row["n"]))
         k = int(float(row["k"]))
         p = int(float(row["p"]))
         mode = row["mode"]
         if mode == "sequential":
-            baselines[(n, k)] = float(row["t_total_median"])
+            sequential_baselines[(n, k)] = float(row["t_total_median"])
         elif mode == "mpi" and p == 1:
-            baselines.setdefault((n, k), float(row["t_total_median"]))
+            mpi_baselines[(n, k)] = float(row["t_total_median"])
 
     for row in summaries:
         n = int(float(row["n"]))
         k = int(float(row["k"]))
         p = int(float(row["p"]))
-        base = baselines.get((n, k))
+        if row["mode"] == "mpi":
+            base = mpi_baselines.get((n, k), sequential_baselines.get((n, k)))
+        else:
+            base = sequential_baselines.get((n, k))
         total = float(row["t_total_median"])
         if base and total > 0:
             row["speedup"] = base / total

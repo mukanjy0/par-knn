@@ -8,6 +8,7 @@ baseline for MPI experiments.
 from collections import Counter
 import argparse
 import csv
+import heapq
 import json
 import os
 from pathlib import Path
@@ -33,13 +34,14 @@ CSV_FIELDS = [
 ]
 
 
-def euclidean_distance(a, b):
-    return np.sqrt(np.sum((a - b) ** 2))
+def squared_distance(a, b):
+    return float(np.sum((a - b) ** 2))
 
 
 def knn_predict(test_point, X_train, y_train, k):
-    distances = [euclidean_distance(test_point, x) for x in X_train]
-    k_indices = np.argsort(distances)[:k]
+    distances = ((idx, squared_distance(test_point, x)) for idx, x in enumerate(X_train))
+    k_nearest = heapq.nsmallest(k, distances, key=lambda item: item[1])
+    k_indices = [idx for idx, _ in k_nearest]
     k_labels = [y_train[i] for i in k_indices]
     most_common = Counter(k_labels).most_common(1)
     return most_common[0][0]
