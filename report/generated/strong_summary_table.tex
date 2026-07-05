@@ -1,0 +1,19 @@
+\begin{table}[H]
+\centering
+\begin{tabular}{llrrrrr}
+\toprule
+Versión & $n_{train}$ & Mejor $p$ & $T_{min}$ (s) & $S(T_{min})$ & $S_{32}$ & $E_{32}$ \\
+\midrule
+V4 & 10000 & 16 & 0.117 & 8.58 & 7.24 & 0.23 \\
+V4 & 25000 & 32 & 0.442 & 6.42 & 6.42 & 0.20 \\
+V4 & 50000 & 8 & 0.893 & 6.17 & 5.86 & 0.18 \\
+V4 & 100000 & 16 & 1.944 & 5.72 & 5.50 & 0.17 \\
+V5 & 10000 & 32 & 0.162 & 25.15 & 25.15 & 0.79 \\
+V5 & 25000 & 32 & 0.487 & 23.03 & 23.03 & 0.72 \\
+V5 & 50000 & 32 & 0.999 & 23.74 & 23.74 & 0.74 \\
+V5 & 100000 & 32 & 2.461 & 22.32 & 22.32 & 0.70 \\
+\bottomrule
+\end{tabular}
+\caption{Resumen de escalabilidad fuerte. El baseline de speedup es p=1 de la misma versión y el mismo tamaño.}
+\label{tab:strong-summary}
+\end{table}

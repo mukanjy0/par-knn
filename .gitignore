@@ -23,6 +23,7 @@ build/
 .ipynb_checkpoints/
 
 # LaTeX report build artifacts
+report/.matplotlib/
 report/**/*.aux
 report/**/*.bbl
 report/**/*.bcf
