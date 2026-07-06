@@ -1,0 +1,161 @@
+% =====================================================================
+%  Fragmento integrable en main.tex mediante:  \input{generated/isoeficiencia.tex}
+%  Reutiliza la notación, los paquetes (amsmath, booktabs, float) y las
+%  complejidades ya derivadas en el documento principal. No define preámbulo.
+% =====================================================================
+
+\section{Análisis de isoeficiencia (condición de escalabilidad)}
+
+En este curso la \textbf{isoeficiencia} se evalúa como una \emph{condición de escalabilidad
+débil} (weak scaling) basada en la Ley de Gustafson. No se busca una función de isoeficiencia
+aislada, sino la relación que dicta cómo debe crecer el tamaño del problema $n$ en función del
+número de procesos $p$ para que la eficiencia $E$ se mantenga constante ($E=O(1)$). Formalizamos
+aquí la condición que ya se anticipó de manera cualitativa en las secciones de escalabilidad
+fuerte y débil, y comparamos el paradigma usado (MPI) con el de memoria compartida (OMP/PRAM).
+
+\subsection{Función de overhead y forma canónica de la eficiencia}
+
+Para obtener una única condición de escalabilidad tomamos un tamaño de problema $n$ con
+$n_{tr}=n_{te}=n$ (el dataset completo escala). De las complejidades ya derivadas, el trabajo
+total (tiempo secuencial dominante, omitiendo $\log K$) es
+\[
+W \equiv T_1 = O(n^2 d),
+\]
+y el cómputo paralelo reparte ese trabajo idealmente, $T_{\text{comp}} = O(n^2 d / p)$.
+
+Definimos la \textbf{función de overhead total} $T_o$ como el trabajo que no realiza el algoritmo
+secuencial:
+\[
+T_o(p) = p\,T_p - W = p\,T_{\text{comp}} + p\,T_{\text{comm}} - W.
+\]
+Como $p\,T_{\text{comp}} = W$, todo el overhead proviene de la comunicación y la sincronización:
+\[
+\boxed{\; T_o(p) = p\, T_{\text{comm}}. \;}
+\]
+Sustituyendo en la eficiencia se obtiene la forma canónica del curso:
+\[
+E = \frac{S_p}{p} = \frac{T_1}{p\,T_p} = \frac{W}{W + T_o}
+  = \frac{1}{\,1 + \dfrac{T_o}{W}\,}.
+\]
+Para que $E=O(1)$ sea constante, el término de overhead $T_o/W$ debe permanecer constante: esa
+igualdad, despejada, define la condición de isoeficiencia.
+
+\subsection{Isoeficiencia en MPI (memoria distribuida)}
+
+En MPI la comunicación es explícita y es el cuello de botella. Sustituyendo $n_{tr}=n_{te}=n$ en
+$T_{\text{comm}}$ y conservando los términos dominantes:
+\[
+T_o = p\,T_{\text{comm}}
+    \approx \underbrace{p^2\alpha}_{(1)\ \text{latencia}}
+    \;+\; \underbrace{p\,\beta\, n\, d}_{(2)\ \text{scatter}}
+    \;+\; \underbrace{p\,\beta\, n\, d\,\log p}_{(3)\ \text{bcast/reducción}}.
+\]
+El término (3) proviene de difundir el conjunto de prueba ($O(nd)$ bytes) y de reducir las listas
+Top-$K$ a lo largo de una jerarquía de profundidad $\log p$; domina sobre (2). Imponemos
+$T_o/W=\text{const}$ con $W=n^2 d$:
+\[
+(1)\quad \frac{p^2\alpha}{n^2 d}=\text{const} \;\Rightarrow\; n \propto p,
+\qquad
+(2)\quad \frac{p\,\beta n d}{n^2 d}=\frac{p\beta}{n}=\text{const} \;\Rightarrow\; n \propto p,
+\]
+\[
+(3)\quad \frac{p\,\beta n d\,\log p}{n^2 d}=\frac{p\beta\log p}{n}=\text{const}
+\;\Rightarrow\; n \propto p\,\log p.
+\]
+La condición más restrictiva es la del término (3). Por tanto:
+\[
+\boxed{\;
+\text{Isoeficiencia MPI:}\quad n \propto p\,\log p,
+\qquad
+W_{iso} = \Theta\!\big(p^2 \log^2 p\big).
+\;}
+\]
+Es decir, el dataset debe crecer ligeramente más rápido que $p$ (factor $\log p$) para amortizar
+la difusión del test y la reducción global de candidatos sobre la red. Si la reducción se hiciera
+con un \texttt{gather} plano al proceso raíz en vez de la reducción en árbol, el término dominante
+sería $O(p)$ en lugar de $O(\log p)$, saturando el enlace del root y empeorando notablemente la
+isoeficiencia.
+
+\subsection{Isoeficiencia en OMP / PRAM (memoria compartida)}
+
+En OpenMP los hilos comparten el mismo espacio de direcciones (modelo UMA), lo que cambia el
+overhead de forma fundamental:
+\begin{itemize}
+    \item \textbf{No hay difusión de datos:} el conjunto de prueba es visible por todos los hilos,
+    por lo que \emph{desaparecen} los términos $p\alpha$ y $\beta n d$ de la comunicación
+    explícita ($T_{\text{comm}} \approx 0$).
+    \item El único overhead proviene de la \textbf{sincronización de hilos} (barreras) y de la
+    reducción de listas Top-$K$ de profundidad $O(\log p)$, realizada mediante accesos directos a
+    memoria.
+\end{itemize}
+Modelando ese overhead (con $K$ constante):
+\[
+T_o^{\text{omp}} \approx p\cdot O(n_{te}K\log p) + O(p)
+= O(p\,n\,\log p) + O(p).
+\]
+Imponiendo $T_o^{\text{omp}}/W=\text{const}$ con $W=n^2 d$, y observando que ya no aparece el
+factor de transporte de datos $\beta d$:
+\[
+\frac{p\,n\,\log p}{n^2 d}=\frac{p\log p}{n\,d}=\text{const}
+\;\Rightarrow\;
+n \propto \frac{p\,\log p}{d}.
+\]
+\[
+\boxed{\;
+\text{Isoeficiencia OMP:}\quad n \propto \frac{p\,\log p}{d}\ \ (\text{a lo sumo } n\propto p),
+\qquad
+W_{iso} = \Theta(p^2)\ \text{sin la constante de red } \beta.
+\;}
+\]
+OMP tiene una isoeficiencia asintóticamente mejor (no paga latencia ni ancho de banda de red),
+\textbf{pero} $p$ está estrictamente acotado al número de núcleos físicos del nodo y todo el
+dataset debe caber en su RAM.
+
+\subsection{Comparación y elección del paradigma}
+
+\begin{table}[H]
+\centering
+\begin{tabular}{lll}
+\toprule
+Criterio & MPI (memoria distribuida) & OMP (memoria compartida) \\
+\midrule
+Comunicación $T_{\text{comm}}$ & Explícita: $\alpha,\beta$ (red) & $\approx 0$ (acceso directo) \\
+Overhead dominante & Difusión/reducción $\beta n d\log p$ & Sincronización (barreras) \\
+Condición de isoeficiencia & $n \propto p\log p$ & $n \propto p\log p / d$ (más suave) \\
+Trabajo $W_{iso}$ & $\Theta(p^2\log^2 p)$ & $\Theta(p^2)$ sin $\beta$ \\
+Límite de $p$ & Horizontal (varios nodos) & Núcleos de un solo nodo \\
+Límite de $n$ & Suma de RAM de los nodos & RAM de un solo nodo \\
+\bottomrule
+\end{tabular}
+\caption{Comparación de la escalabilidad de ambos paradigmas para el KNN.}
+\label{tab:iso-comparacion}
+\end{table}
+
+Aunque OMP escala mejor asintóticamente, su paralelismo está limitado a los núcleos y la memoria
+de un solo nodo. En este proyecto se eligió \textbf{MPI por un tema de memoria}: al distribuir el
+conjunto de entrenamiento, el mismo código puede superar el límite de RAM de un nodo y escalar
+$n$ y $p$ horizontalmente sin reescritura. Los experimentos evaluaron hasta $p=32$ procesos, y la
+elección del paradigma de memoria distribuida es la que habilita crecer más allá de ese punto
+cuando el dataset no cabe en un único nodo.
+
+\subsection{Validación experimental}
+
+La teoría se contrasta con las mediciones en Khipu para dos versiones: \textbf{V2} (reducción con
+\texttt{gather} plano al root) y \textbf{V3} (reducción binaria en árbol).
+
+\input{generated/strong_summary_table.tex}
+
+En la escalabilidad fuerte (Tabla~\ref{tab:strong-summary}), la eficiencia a $p=32$ es
+$E_{32}\approx 0.70$–$0.79$ en V3 frente a $E_{32}\approx 0.17$–$0.23$ en V2. La eficiencia casi
+constante de V3 al crecer $n$ es consistente con la isoeficiencia alcanzable $n\propto p\log p$
+(reducción en árbol, término $O(\log p)$). El \texttt{gather} plano de V2 introduce un cuello de
+botella $O(p)$ en el root, degradando la eficiencia justo como predice el modelo.
+
+\input{generated/weak_table.tex}
+
+En la escalabilidad débil (Tabla~\ref{tab:weak}), con $n_{tr}/p$ constante y $n_{te}$ fijo, el
+tiempo total crece con $p$ (V2: $0.24\,\text{s}\to 2.0\,\text{s}$; V3: $1.07\,\text{s}\to
+2.29\,\text{s}$ de $p{=}1$ a $p{=}32$). Este crecimiento es coherente con los términos $\log p$ de
+comunicación: bajo esta forma de weak scaling no se alcanza el caso ideal (tiempo constante) sino
+$T_p=O(1+\log p)$, tal como anticipa el análisis, y V3 crece más lentamente que V2 confirmando que
+la reducción en árbol amortigua mejor el overhead.
