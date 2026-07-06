@@ -21,7 +21,7 @@
 \author{
     Ian González (100\%) \and Eduardo Aragon (100\%) \and Jorge Quenta (100\%)
 }
-\date{Mayo 2026}
+\date{\today}
 
 \begin{document}
 
@@ -778,11 +778,14 @@ Votación final & Proceso root \\
 \caption{Correspondencia entre el diseño teórico y las dos implementaciones MPI analizadas.}
 \end{table}
 
-Como nota metodológica, el diseño PRAM y la formulación del algoritmo fueron desarrollados por
-el equipo, mientras que herramientas de apoyo basadas en modelos de lenguaje, en particular
-Claude y Codex, se utilizaron para asistir en la implementación, depuración y automatización
-de experimentos. Esta asistencia se usó como soporte técnico, no como sustituto del diseño
-algorítmico ni del análisis realizado por el equipo.
+Como apoyo metodológico, se utilizaron asistentes de IA como Claude y Codex~\cite{claude,codex}
+para acelerar tareas de implementación, depuración, automatización experimental y revisión del
+documento. En particular, se emplearon para traducir el diseño PRAM a código MPI/\texttt{mpi4py},
+depurar y comparar las versiones v2/v3, preparar scripts de ejecución y trabajos SLURM,
+organizar resultados desde CSV en tablas y figuras, y revisar el formato LaTeX. El diseño
+algorítmico, la selección de métricas y la interpretación final de resultados fueron
+responsabilidad del equipo; estas herramientas se usaron como apoyo auxiliar, no como fuentes
+teóricas principales ni como sustitutos del análisis.
 
 \section{Resultados y análisis}
 
@@ -1319,11 +1322,6 @@ más grandes.
 
 \begin{thebibliography}{9}
 
-\bibitem{course}
-José Fiestas.
-\textit{Computación Paralela y Distribuida: Proyecto de Laboratorio 2026-I}.
-Universidad de Ingeniería y Tecnología, 2026.
-
 \bibitem{mpi4py}
 Lisandro Dalcin.
 \textit{mpi4py: MPI for Python}.
@@ -1341,6 +1339,20 @@ Mukanjy0.
 \textit{par-knn}.
 Repositorio del proyecto. Disponible en:
 \href{https://github.com/mukanjy0/par-knn}{https://github.com/mukanjy0/par-knn}.
+
+\bibitem{claude}
+Anthropic.
+\textit{Claude}.
+Asistente de inteligencia artificial usado como apoyo para implementación, depuración y revisión
+del reporte. Disponible en:
+\href{https://claude.ai/}{https://claude.ai/}. Consultado en 2026.
+
+\bibitem{codex}
+OpenAI.
+\textit{Codex}.
+Asistente de programación usado como apoyo para implementación MPI, automatización de experimentos
+y edición del documento. Disponible en:
+\href{https://openai.com/codex/}{https://openai.com/codex/}. Consultado en 2026.
 
 \end{thebibliography}
 
