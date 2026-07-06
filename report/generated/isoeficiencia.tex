@@ -4,7 +4,7 @@
 %  complejidades ya derivadas en el documento principal. No define preámbulo.
 % =====================================================================
 
-\section{Análisis de isoeficiencia (condición de escalabilidad)}
+\subsection{Análisis de isoeficiencia (condición de escalabilidad)}
 
 En este curso la \textbf{isoeficiencia} se evalúa como una \emph{condición de escalabilidad
 débil} (weak scaling) basada en la Ley de Gustafson. No se busca una función de isoeficiencia
@@ -13,7 +13,7 @@ número de procesos $p$ para que la eficiencia $E$ se mantenga constante ($E=O(1
 aquí la condición que ya se anticipó de manera cualitativa en las secciones de escalabilidad
 fuerte y débil, y comparamos el paradigma usado (MPI) con el de memoria compartida (OMP/PRAM).
 
-\subsection{Función de overhead y forma canónica de la eficiencia}
+\subsubsection{Función de overhead y forma canónica de la eficiencia}
 
 Para obtener una única condición de escalabilidad tomamos un tamaño de problema $n$ con
 $n_{tr}=n_{te}=n$ (el dataset completo escala). De las complejidades ya derivadas, el trabajo
@@ -40,7 +40,7 @@ E = \frac{S_p}{p} = \frac{T_1}{p\,T_p} = \frac{W}{W + T_o}
 Para que $E=O(1)$ sea constante, el término de overhead $T_o/W$ debe permanecer constante: esa
 igualdad, despejada, define la condición de isoeficiencia.
 
-\subsection{Isoeficiencia en MPI (memoria distribuida)}
+\subsubsection{Isoeficiencia en MPI (memoria distribuida)}
 
 En MPI la comunicación es explícita y es el cuello de botella. Sustituyendo $n_{tr}=n_{te}=n$ en
 $T_{\text{comm}}$ y conservando los términos dominantes:
@@ -76,7 +76,7 @@ con un \texttt{gather} plano al proceso raíz en vez de la reducción en árbol,
 sería $O(p)$ en lugar de $O(\log p)$, saturando el enlace del root y empeorando notablemente la
 isoeficiencia.
 
-\subsection{Isoeficiencia en OMP / PRAM (memoria compartida)}
+\subsubsection{Isoeficiencia en OMP / PRAM (memoria compartida)}
 
 En OpenMP los hilos comparten el mismo espacio de direcciones (modelo UMA), lo que cambia el
 overhead de forma fundamental:
@@ -111,7 +111,7 @@ OMP tiene una isoeficiencia asintóticamente mejor (no paga latencia ni ancho de
 \textbf{pero} $p$ está estrictamente acotado al número de núcleos físicos del nodo y todo el
 dataset debe caber en su RAM.
 
-\subsection{Comparación y elección del paradigma}
+\subsubsection{Comparación y elección del paradigma}
 
 \begin{table}[H]
 \centering
@@ -138,24 +138,3 @@ $n$ y $p$ horizontalmente sin reescritura. Los experimentos evaluaron hasta $p=3
 elección del paradigma de memoria distribuida es la que habilita crecer más allá de ese punto
 cuando el dataset no cabe en un único nodo.
 
-\subsection{Validación experimental}
-
-La teoría se contrasta con las mediciones en Khipu para dos versiones: \textbf{V2} (reducción con
-\texttt{gather} plano al root) y \textbf{V3} (reducción binaria en árbol).
-
-\input{generated/strong_summary_table.tex}
-
-En la escalabilidad fuerte (Tabla~\ref{tab:strong-summary}), la eficiencia a $p=32$ es
-$E_{32}\approx 0.70$–$0.79$ en V3 frente a $E_{32}\approx 0.17$–$0.23$ en V2. La eficiencia casi
-constante de V3 al crecer $n$ es consistente con la isoeficiencia alcanzable $n\propto p\log p$
-(reducción en árbol, término $O(\log p)$). El \texttt{gather} plano de V2 introduce un cuello de
-botella $O(p)$ en el root, degradando la eficiencia justo como predice el modelo.
-
-\input{generated/weak_table.tex}
-
-En la escalabilidad débil (Tabla~\ref{tab:weak}), con $n_{tr}/p$ constante y $n_{te}$ fijo, el
-tiempo total crece con $p$ (V2: $0.24\,\text{s}\to 2.0\,\text{s}$; V3: $1.07\,\text{s}\to
-2.29\,\text{s}$ de $p{=}1$ a $p{=}32$). Este crecimiento es coherente con los términos $\log p$ de
-comunicación: bajo esta forma de weak scaling no se alcanza el caso ideal (tiempo constante) sino
-$T_p=O(1+\log p)$, tal como anticipa el análisis, y V3 crece más lentamente que V2 confirmando que
-la reducción en árbol amortigua mejor el overhead.

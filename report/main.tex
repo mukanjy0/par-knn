@@ -745,6 +745,8 @@ T_{\text{theory}}(p)
 T_{\text{exp}}(p).
 \]
 
+\input{generated/isoeficiencia.tex}
+
 \subsection{Implementación}
 
 La implementación sigue directamente el diseño PRAM anterior y se desarrolló en Python usando
@@ -1036,7 +1038,203 @@ comunicación contienen componentes que crecen con $p$ o con $\log p$, mientras 
 local disminuye con $1/p$. Por eso, incluso una comunicación pequeña en valor absoluto puede
 reducir el beneficio marginal de agregar más procesos.
 
-\subsection{Número óptimo de procesos}
+\subsection{Validación experimental de la isoeficiencia}
+
+La teoría se contrasta con las mediciones en Khipu para dos versiones: \textbf{V2} (reducción con
+\texttt{gather} plano al root) y \textbf{V3} (reducción binaria en árbol).
+
+\input{generated/strong_summary_table.tex}
+
+En la escalabilidad fuerte (Tabla~\ref{tab:strong-summary}), la eficiencia a $p=32$ es
+$E_{32}\approx 0.70$–$0.79$ en V3 frente a $E_{32}\approx 0.17$–$0.23$ en V2. La eficiencia casi
+constante de V3 al crecer $n$ es consistente con la isoeficiencia alcanzable $n\propto p\log p$
+(reducción en árbol, término $O(\log p)$). El \texttt{gather} plano de V2 introduce un cuello de
+botella $O(p)$ en el root, degradando la eficiencia justo como predice el modelo.
+
+\input{generated/weak_table.tex}
+
+En la escalabilidad débil (Tabla~\ref{tab:weak}), con $n_{tr}/p$ constante y $n_{te}$ fijo, el
+tiempo total crece con $p$ (V2: $0.24\,\text{s}\to 2.0\,\text{s}$; V3: $1.07\,\text{s}\to
+2.29\,\text{s}$ de $p{=}1$ a $p{=}32$). Este crecimiento es coherente con los términos $\log p$ de
+comunicación: bajo esta forma de weak scaling no se alcanza el caso ideal (tiempo constante) sino
+$T_p=O(1+\log p)$, tal como anticipa el análisis, y V3 crece más lentamente que V2 confirmando que
+la reducción en árbol amortigua mejor el overhead.
+
+\subsection{Normalización de la complejidad teórica}\label{sec:normalizacion}
+
+La notación Big-$O$ describe crecimiento asintótico, pero no da tiempos en segundos: la expresión
+de $T_p$ es adimensional y no puede superponerse directamente sobre las mediciones experimentales.
+\emph{Normalizar} significa introducir las constantes de proporcionalidad que faltan para convertir
+esa expresión en segundos, calibrándolas con los propios datos medidos. Con ello puede graficarse
+$T_{\text{theory}}(p)$ junto a $T_{\text{exp}}(p)$ y verificar que ambas siguen la misma forma.
+
+\subsubsection{Modelo con constantes físicas}
+
+Se reescribe el tiempo total introduciendo tres constantes: $C$ (tiempo por unidad de trabajo de
+cómputo), $\alpha$ (latencia por mensaje) y $\beta$ (tiempo por byte transmitido):
+\[
+T(p)
+=
+C\left[
+\frac{n_{tr}n_{te}}{p}(d+\log_2 K) + n_{te}K\log_2 p
+\right]
++
+p\alpha
++
+4\beta n_{tr}d
++
+(\alpha + 4\beta n_{te}d)\log_2 p
++
+(\alpha + 8\beta n_{te}K)\log_2 p.
+\]
+
+\subsubsection{Instanciación con los parámetros del experimento}
+
+Para el caso de escalabilidad fuerte con $n_{tr}=100000$, $n_{te}=5000$, $d=64$ y $K=3$
+(dataset \texttt{digits}, imágenes $8\times8$), se evalúan los coeficientes numéricos
+(con $d+\log_2 K = 65.585$):
+\[
+n_{tr}n_{te}(d+\log_2 K) = 3.279\times10^{10},
+\qquad
+n_{te}K = 1.5\times10^4,
+\]
+\[
+4n_{tr}d = 2.56\times10^7,
+\qquad
+4n_{te}d = 1.28\times10^6,
+\qquad
+8n_{te}K = 1.2\times10^5.
+\]
+Sustituyendo y agrupando los dos términos de comunicación en $\log_2 p$:
+\[
+\boxed{
+T(p)
+=
+C\left(
+\frac{3.279\times10^{10}}{p}
++
+1.5\times10^4\log_2 p
+\right)
++
+2.56\times10^7\,\beta
++
+\alpha\,p
++
+\left(2\alpha + 1.40\times10^6\,\beta\right)\log_2 p
+}.
+\]
+Las únicas incógnitas son la variable $p$ y las constantes $C$, $\alpha$ y $\beta$.
+
+\subsubsection{Forma canónica y recuperación de constantes}
+
+La expresión anterior se ajusta a un modelo de cuatro formas funcionales:
+\[
+T(p) = a_0 + \frac{a_1}{p} + a_2\log_2 p + a_3\,p,
+\]
+donde cada coeficiente concentra un mecanismo físico distinto:
+\[
+a_0 = 2.56\times10^7\,\beta
+\quad(\text{reparto del entrenamiento}),
+\qquad
+a_1 = 3.279\times10^{10}\,C
+\quad(\text{cómputo}),
+\]
+\[
+a_2 = 1.5\times10^4\,C + 2\alpha + 1.40\times10^6\,\beta
+\quad(\text{bcast + reduce}),
+\qquad
+a_3 = \alpha
+\quad(\text{latencia } p\alpha).
+\]
+Los coeficientes $a_0,\dots,a_3$ se estiman por mínimos cuadrados a partir de los tiempos medidos
+en $p = 1,2,4,8,16,32$. De ellos se recuperan las constantes físicas:
+\[
+\alpha = a_3,
+\qquad
+\beta = \frac{a_0}{2.56\times10^7},
+\qquad
+C = \frac{a_1}{3.279\times10^{10}}.
+\]
+
+\subsubsection{Validación}
+
+Como se ajustan cuatro coeficientes pero solo hay tres constantes físicas, el coeficiente $a_2$
+queda como \emph{ecuación de validación}: debe cumplirse, dentro del error de ajuste,
+\[
+a_2 \approx 1.5\times10^4\,C + 2\alpha + 1.40\times10^6\,\beta.
+\]
+Si la relación se satisface y la curva $T(p)$ ajustada reproduce los puntos experimentales, se
+concluye que el modelo de complejidad captura correctamente el comportamiento observado. En
+particular, el término $a_3\,p$ explica por qué el tiempo deja de mejorar e incluso aumenta para
+$p$ grande, mientras que $a_1/p$ domina en la región de escalado casi lineal.
+
+\subsubsection{Ajuste para la versión v2}\label{sec:norm-v2}
+
+Se aplica el procedimiento a la versión v2 (descomposición por entrenamiento con árboles
+explícitos) en el caso de escalabilidad fuerte con $n_{tr}=100000$ y $n_{te}=5000$. Los tiempos
+totales medidos son:
+
+\begin{table}[H]
+\centering
+\begin{tabular}{rrrrrrr}
+\toprule
+$p$ & 1 & 2 & 4 & 8 & 16 & 32 \\
+\midrule
+$T_p^{exp}$ (s) & 11.119 & 5.835 & 3.028 & 2.088 & 1.944 & 2.022 \\
+\bottomrule
+\end{tabular}
+\caption{Tiempos totales de v2 usados en el ajuste ($n_{tr}=100000$, $n_{te}=5000$, $d=64$, $K=3$).}
+\end{table}
+
+Como el término constante de reparto del entrenamiento ($a_0$) resulta indistinguible con solo seis
+puntos (el ajuste sin restricción lo lleva a un valor negativo, no físico), se emplea el modelo de
+tres formas
+\[
+T(p) = \frac{a_1}{p} + a_2\log_2 p + a_3\,p,
+\]
+cuyas constantes quedan exactamente determinadas. El ajuste por mínimos cuadrados da:
+\[
+a_1 = 11.087,
+\qquad
+a_2 = 0.1608,
+\qquad
+a_3 = 0.0289,
+\qquad
+R^2 = 0.9991.
+\]
+Recuperando las constantes físicas mediante $C = a_1/(3.279\times10^{10})$, $\alpha = a_3$ y
+$\beta = (a_2 - 1.5\times10^4\,C - 2\alpha)/(1.40\times10^6)$:
+\[
+C \approx 3.38\times10^{-10}\ \text{s/unidad},
+\qquad
+\alpha \approx 28.9\ \text{ms},
+\qquad
+\beta \approx 7.36\times10^{-8}\ \text{s/byte}.
+\]
+Las tres son positivas y del orden esperado (son constantes \emph{efectivas} que absorben el
+\emph{overhead} de \texttt{mpi4py} y las barreras de sincronización).
+
+La descomposición del tiempo ajustado muestra el cruce entre cómputo y comunicación: en $p=1$ el
+cómputo ($a_1/p$) es el $99.7\%$ del tiempo, pero su peso cae hasta $\sim38\%$ en $p=16$ y
+$\sim17\%$ en $p=32$, punto en que la comunicación ($a_2\log_2 p + a_3\,p$) ya domina. Esto valida
+la predicción teórica: v2 escala casi linealmente mientras el cómputo manda y se estanca cuando la
+comunicación lo alcanza.
+
+\subsubsection{Número óptimo de procesos teórico}
+
+Minimizando el modelo ajustado, $\dfrac{dT}{dp} = -\dfrac{a_1}{p^2} + \dfrac{a_2}{p\ln 2} + a_3 = 0$,
+se obtiene la ecuación cuadrática $a_3\,p^2 + \dfrac{a_2}{\ln 2}\,p - a_1 = 0$, cuya raíz positiva es:
+\[
+p^* \approx 15.99 \;\approx\; 16.
+\]
+Este óptimo teórico coincide exactamente con el óptimo empírico $\arg\min_p T_p^{exp} = 16$
+($T_{16} = 1.944$ s), lo que confirma que el modelo normalizado no solo reproduce la forma de la
+curva sino también el punto de operación óptimo. Con el criterio alternativo de eficiencia
+($E_p \geq 0.5$) el óptimo sería menor, pues para v2 la eficiencia cae por debajo de $0.5$ ya en
+$p=16$.
+
+
+\subsection{Número óptimo de procesos empírico}
 
 La Tabla~\ref{tab:v2-optimal-p} resume el mejor $p$ experimental para cada tamaño de strong
 scaling. El mínimo absoluto no siempre coincide con el mejor balance entre tiempo y eficiencia.
@@ -1078,8 +1276,6 @@ Como mejoras, se recomienda aumentar el número de repeticiones, reportar desvia
 intervalos de confianza en las tablas principales, probar más tamaños de dataset, optimizar el
 \textit{batching} de test, evaluar una implementación C++/MPI o kernels NumPy más optimizados,
 y explorar topologías o colectivas MPI alternativas para reducir el costo de difusión y reducción.
-
-\input{generated/isoeficiencia.tex}
 
 \section{Conclusiones}
 

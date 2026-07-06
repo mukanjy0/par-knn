@@ -1,4 +1,4 @@
-\section{Normalización de la complejidad teórica}\label{sec:normalizacion}
+\subsection{Normalización de la complejidad teórica}\label{sec:normalizacion}
 
 La notación Big-$O$ describe crecimiento asintótico, pero no da tiempos en segundos: la expresión
 de $T_p$ es adimensional y no puede superponerse directamente sobre las mediciones experimentales.
@@ -6,7 +6,7 @@ de $T_p$ es adimensional y no puede superponerse directamente sobre las medicion
 esa expresión en segundos, calibrándolas con los propios datos medidos. Con ello puede graficarse
 $T_{\text{theory}}(p)$ junto a $T_{\text{exp}}(p)$ y verificar que ambas siguen la misma forma.
 
-\subsection{Modelo con constantes físicas}
+\subsubsection{Modelo con constantes físicas}
 
 Se reescribe el tiempo total introduciendo tres constantes: $C$ (tiempo por unidad de trabajo de
 cómputo), $\alpha$ (latencia por mensaje) y $\beta$ (tiempo por byte transmitido):
@@ -26,7 +26,7 @@ p\alpha
 (\alpha + 8\beta n_{te}K)\log_2 p.
 \]
 
-\subsection{Instanciación con los parámetros del experimento}
+\subsubsection{Instanciación con los parámetros del experimento}
 
 Para el caso de escalabilidad fuerte con $n_{tr}=100000$, $n_{te}=5000$, $d=64$ y $K=3$
 (dataset \texttt{digits}, imágenes $8\times8$), se evalúan los coeficientes numéricos
@@ -63,7 +63,7 @@ C\left(
 \]
 Las únicas incógnitas son la variable $p$ y las constantes $C$, $\alpha$ y $\beta$.
 
-\subsection{Forma canónica y recuperación de constantes}
+\subsubsection{Forma canónica y recuperación de constantes}
 
 La expresión anterior se ajusta a un modelo de cuatro formas funcionales:
 \[
@@ -94,7 +94,7 @@ en $p = 1,2,4,8,16,32$. De ellos se recuperan las constantes físicas:
 C = \frac{a_1}{3.279\times10^{10}}.
 \]
 
-\subsection{Validación}
+\subsubsection{Validación}
 
 Como se ajustan cuatro coeficientes pero solo hay tres constantes físicas, el coeficiente $a_2$
 queda como \emph{ecuación de validación}: debe cumplirse, dentro del error de ajuste,
@@ -106,7 +106,7 @@ concluye que el modelo de complejidad captura correctamente el comportamiento ob
 particular, el término $a_3\,p$ explica por qué el tiempo deja de mejorar e incluso aumenta para
 $p$ grande, mientras que $a_1/p$ domina en la región de escalado casi lineal.
 
-\subsection{Ajuste para la versión v2}\label{sec:norm-v2}
+\subsubsection{Ajuste para la versión v2}\label{sec:norm-v2}
 
 Se aplica el procedimiento a la versión v2 (descomposición por entrenamiento con árboles
 explícitos) en el caso de escalabilidad fuerte con $n_{tr}=100000$ y $n_{te}=5000$. Los tiempos
@@ -158,7 +158,7 @@ $\sim17\%$ en $p=32$, punto en que la comunicación ($a_2\log_2 p + a_3\,p$) ya 
 la predicción teórica: v2 escala casi linealmente mientras el cómputo manda y se estanca cuando la
 comunicación lo alcanza.
 
-\subsection{Número óptimo de procesos para v2}
+\subsubsection{Número óptimo de procesos para v2}
 
 Minimizando el modelo ajustado, $\dfrac{dT}{dp} = -\dfrac{a_1}{p^2} + \dfrac{a_2}{p\ln 2} + a_3 = 0$,
 se obtiene la ecuación cuadrática $a_3\,p^2 + \dfrac{a_2}{\ln 2}\,p - a_1 = 0$, cuya raíz positiva es:
