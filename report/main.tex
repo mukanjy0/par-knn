@@ -1033,10 +1033,21 @@ total crece de 0.3\% a 3.6\%. La fase de \texttt{scatter} es la más visible en 
 \label{fig:v2-comp-comm}
 \end{figure}
 
-Este comportamiento es consistente con el análisis de $T_{\text{comm}}$: los términos de
-comunicación contienen componentes que crecen con $p$ o con $\log p$, mientras que el cómputo
-local disminuye con $1/p$. Por eso, incluso una comunicación pequeña en valor absoluto puede
-reducir el beneficio marginal de agregar más procesos.
+\begin{figure}[H]
+\centering
+\includegraphics[width=0.76\textwidth]{results/v2/strong/figures/granularity_vs_p_n105000.png}
+\caption{Granularidad de v2 para $n=105000$, medida como $T_{\text{comp}}/T_{\text{comm}}$. La caída de la granularidad al aumentar $p$ muestra que cada proceso realiza menos cómputo útil por unidad de comunicación, lo que contribuye a la saturación del speedup.}
+\label{fig:granularidad-v2}
+\end{figure}
+
+La Figura~\ref{fig:granularidad-v2} resume este balance mediante la granularidad
+$G(p)=T_{\text{comp}}(p)/T_{\text{comm}}(p)$. Una granularidad alta implica que cada proceso
+ejecuta mucho cómputo por unidad de comunicación. Al aumentar $p$, cada proceso recibe menos
+entrenamiento y $T_{\text{comp}}$ disminuye; en cambio, $T_{\text{comm}}$ no baja de la misma
+forma porque incluye distribución del entrenamiento, difusión del test y reducción de Top-$K$.
+Por ello, la granularidad cae de aproximadamente 339 en $p=1$ a 27 en $p=32$, explicando por qué
+el beneficio marginal de aumentar procesos se reduce y el speedup se satura entre $p=16$ y
+$p=32$.
 
 \subsection{Validación experimental de la isoeficiencia}
 
@@ -1050,6 +1061,12 @@ $E_{32}\approx 0.70$–$0.79$ en V3 frente a $E_{32}\approx 0.17$–$0.23$ en V2
 constante de V3 al crecer $n$ es consistente con la isoeficiencia alcanzable $n\propto p\log p$
 (reducción en árbol, término $O(\log p)$). El \texttt{gather} plano de V2 introduce un cuello de
 botella $O(p)$ en el root, degradando la eficiencia justo como predice el modelo.
+
+Esta lectura no contradice la selección de v2 para el análisis principal. V3 puede mostrar mejor
+eficiencia relativa e isoeficiencia por su estructura de reducción, pero sus tiempos base son más
+altos en estos experimentos; por tanto, v2 sigue siendo la opción práctica cuando el criterio es
+menor tiempo absoluto, mientras que V3 es útil para discutir el comportamiento asintótico de la
+comunicación.
 
 \input{generated/weak_table.tex}
 
@@ -1289,6 +1306,10 @@ $p=32$. Para $n=105000$, el tiempo baja de 11.119 s a 1.944 s en $p=16$, con spe
 $p=32$ el tiempo sube a 2.022 s y la eficiencia cae a 0.17. Esto coincide con el análisis teórico:
 el cómputo local disminuye al repartir el entrenamiento, pero la comunicación, la reducción Top-$K$
 y el overhead de ejecución limitan el beneficio marginal de usar más procesos.
+
+El análisis de granularidad refuerza esta conclusión: al aumentar $p$, la razón
+$T_{\text{comp}}/T_{\text{comm}}$ disminuye, lo que confirma que el cómputo local se reduce más
+rápido que la comunicación y explica la pérdida de eficiencia para valores grandes de $p$.
 
 En weak scaling, mantener $n_{train}/p=3125$ no mantiene el tiempo constante: v2 pasa de 0.243 s
 en $p=1$ a 2.019 s en $p=32$. Por tanto, el algoritmo escala de forma útil para tamaños moderados,
